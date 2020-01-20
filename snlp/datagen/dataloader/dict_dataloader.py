@@ -25,7 +25,9 @@ class DictDataLoader(DataLoader):
     """
     def __init__(self,
                  dataset: Dataset,
+                 char: bool=False,  # 表示是否返回分字的结果
                  batch_size: int = 64,
+                 turns: int=5,  # 是否需要返回turns这个索引
                  stage='train',
                  device: typing.Union[torch.device, int, list, None] = None,
                  shuffle: bool = False,
@@ -49,7 +51,9 @@ class DictDataLoader(DataLoader):
             device = torch.device(
                 "cuda" if torch.cuda.is_available() else "cpu")
 
+        self._turns = turns
         self._dataset = dataset
+        self._char = char
         self._shuffle = shuffle
         self._sort = sort
         self._batch_size = batch_size
@@ -100,6 +104,10 @@ class DictDataLoader(DataLoader):
             for key, value in x.items():
                 if key == constants.ID_LEFT or key == constants.ID_RIGHT:
                     continue
+                # 不需要char相关的表征
+                if not self._char and key in [constants.UTTRS_CHAR, constants.UTTRS_CHAR_LEN,
+                                              constants.RESP_CHAR, constants.RESP_CHAR_LEN]:
+                    continue
                 if value is None or type(value[0]) == str:
                     continue
                 try:
@@ -108,6 +116,11 @@ class DictDataLoader(DataLoader):
                         device=self._device, pin_memory=self._pin_memory)
                 except:
                     pass
+
+            if self._turns > 0:
+                batch_x[constants.TURNS] = torch.tensor(
+                    range(1, self._turns+1), dtype=torch.long,
+                    device=self._device, pin_memory=self._pin_memory).unsqueeze(0)
 
             # 这里返回的batch_x是字典型的
             if self._stage == 'test':
@@ -119,7 +132,7 @@ class DictDataLoader(DataLoader):
                         device=self._device, pin_memory=self._pin_memory)
                 else: # 对应task='ranking'或者'regression'
                     batch_y = torch.tensor(
-                        np.array(y).squeeze(), dtype=torch.float,
+                        np.array(y).reshape(len(y), 1), dtype=torch.float,
                         device=self._device, pin_memory=self._pin_memory)
                 yield batch_x, batch_y
 

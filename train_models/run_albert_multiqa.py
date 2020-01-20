@@ -1,0 +1,200 @@
+#!/usr/bin/env python
+# encoding: utf-8
+'''
+@author: zessay
+@license: (C) Copyright Sogou.
+@contact: zessay@sogou-inc.com
+@file: run_albert_multiqa.py
+@time: 2020/1/7 22:04
+@description: 
+'''
+import sys
+import os
+import time
+import pandas as pd
+import torch
+import torch.nn as nn
+from pathlib import Path
+import warnings
+warnings.filterwarnings("ignore")
+
+sys.path.append(os.path.dirname(os.getcwd()))
+
+from albert_pytorch.model.modeling_albert_bright import AlbertConfig
+
+# 将数据封装成Dataset和DataLoader
+from snlp.datagen.dataset.pair_dataset import PairDataset
+from snlp.callbacks.padding import MultiQAPadding
+from snlp.datagen.dataloader.dict_dataloader import DictDataLoader
+from snlp.models.retrieval.albert_msn import AlbertMSN
+from snlp.models.retrieval.albert_imn import AlbertIMN
+from snlp import tasks, metrics, losses
+import snlp.tools.constants as constants
+from snlp.tools.log import logger
+from snlp.preprocessors.chinese_preprocessor import CNAlbertPreprocessorForMultiQA
+from snlp.tools.common import seed_everything
+from snlp.optimizer import RAdam, AdamW
+from snlp.schedule import get_linear_schedule_with_warmup
+from snlp.trainers import Trainer
+
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+
+# 定义任务类型
+start = time.time()
+cls_task = tasks.Classification(num_classes=2, losses=[nn.CrossEntropyLoss()])
+cls_task.metrics = ['accuracy']
+
+fixed_length_uttr = 40
+fixed_length_resp = 40
+fixed_length_turn = 5
+
+name = 'imn'
+batch_size = 128
+seed = 2020
+lr = 1e-5
+epochs = 20
+l2_reg = 1e-2
+freeze_bert = False
+
+# 目录相关
+albert_path = "/home/speech/models/albert_tiny_pytorch_489k"
+vocab_file = "vocab.txt"
+config_file = "config.json"
+data_dir = "/home/speech/data/multi_clean"
+train_file = "multi_train_multi_turns.csv"
+valid_file = "multi_val_multi_turns.csv"
+checkpoint_file = "/home/speech/projects/pycharm_projects/Pytorch_Templates/models/aimn_model799.pt"
+
+
+# 定义所有模型
+MODELS = {
+    'msn' : AlbertMSN,
+    'imn' : AlbertIMN
+}
+
+# 数据预处理
+def preprocess_train_and_val(train_file, valid_file):
+    logger.info("读取数据")
+    train_data = pd.read_csv(train_file)
+    valid_data = pd.read_csv(valid_file)
+    train_data.dropna(axis=0, subset=[constants.UTTRS, constants.RESP], inplace=True)
+    valid_data.dropna(axis=0, subset=[constants.UTTRS, constants.RESP], inplace=True)
+    preprocessor = CNAlbertPreprocessorForMultiQA(Path(albert_path) / vocab_file,
+                                                  uttr_len=fixed_length_uttr,
+                                                  resp_len=fixed_length_resp)
+    logger.info(f"训练集数据量为：{train_data.shape[0]} | 验证集数据量为：{valid_data.shape[0]}")
+
+    logger.info("使用Preprocessor处理数据")
+    train_data = preprocessor.transform(train_data,
+                                        uttr_col=constants.UTTRS,
+                                        resp_col=constants.RESP)
+    valid_data = preprocessor.transform(valid_data,
+                                        uttr_col=constants.UTTRS,
+                                        resp_col=constants.RESP)
+    use_cols = ['D_num', 'turns', 'utterances', 'response', 'utterances_len', 'response_len', 'label']
+    train_data = train_data[use_cols]
+    valid_data = valid_data[use_cols]
+
+    logger.info(f"处理之后——训练集数据量为：{train_data.shape[0]} | 验证集数据量为：{valid_data.shape[0]}")
+
+    label_type = int
+    train_data[constants.LABEL] = train_data[constants.LABEL].astype(label_type)
+    valid_data[constants.LABEL] = valid_data[constants.LABEL].astype(label_type)
+    return train_data, valid_data
+
+
+def get_dataloader(train_data, valid_data):
+    train_dataset = PairDataset(train_data, num_neg=0)
+    valid_dataset = PairDataset(valid_data, num_neg=0)
+    padding = MultiQAPadding(fixed_length_uttr=fixed_length_uttr, fixed_length_resp=fixed_length_resp,
+                             fixed_length_turn=fixed_length_turn)
+
+    train_dataloader = DictDataLoader(train_dataset, batch_size=batch_size,
+                                      turns=fixed_length_turn,
+                                      stage='train',
+                                      shuffle=True,
+                                      sort=False, callback=padding)
+    valid_dataloader = DictDataLoader(valid_dataset, batch_size=batch_size,
+                                      turns=fixed_length_turn,
+                                      stage='dev',
+                                      shuffle=False,
+                                      sort=False,
+                                      callback=padding)
+
+    for i, (x, y) in enumerate(train_dataloader):
+        # 打印Utterance的形状
+        logger.info(f"The shape of utternace is {x[constants.UTTRS].shape}")
+        if i == 0:
+            break
+    return train_dataloader, valid_dataloader
+
+if __name__ == "__main__":
+
+    logger.info(f"----------------------- 训练 {name.upper()}: {time.ctime()} --------------------------")
+    seed_everything(seed)
+
+    logger.info(f"使用参数为 —— \n L2_REG: {l2_reg} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr} | "
+                f"Uttr_Len: {fixed_length_uttr} | Resp_Len: {fixed_length_resp} | Turn: {fixed_length_turn}")
+    train_processed_file = train_file[0:-4] + "_albert_processed.csv"
+    valid_processed_file = valid_file[0:-4] + "_albert_processed.csv"
+    try:
+        logger.info("加载预处理好的数据")
+        from ast import literal_eval
+
+        train_data = pd.read_csv(Path(data_dir) / train_processed_file)
+        valid_data = pd.read_csv(Path(data_dir) / valid_processed_file)
+        ## 将这两列转换回list类型
+        logger.info(f"将{constants.UTTRS}和{constants.RESP}转换成list")
+        for col in [constants.UTTRS, constants.RESP]:
+            train_data[col] = train_data[col].apply(literal_eval)
+            valid_data[col] = valid_data[col].apply(literal_eval)
+        logger.info("加载完成")
+    except:
+        train_data, valid_data = preprocess_train_and_val(
+            Path(data_dir) / train_file,
+            Path(data_dir) / valid_file
+        )
+        train_data.to_csv(Path(data_dir) / train_processed_file, index=False)
+        valid_data.to_csv(Path(data_dir) / valid_processed_file, index=False)
+        logger.info("保存了预处理好的数据")
+
+    train_dataloader, valid_dataloader = get_dataloader(train_data, valid_data)
+
+    # ------------------------------------
+    # 定义模型
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    logger.info("定义模型和参数")
+    config = AlbertConfig.from_pretrained(Path(albert_path) / config_file)
+    model = MODELS[name](uttr_len=fixed_length_uttr, resp_len=fixed_length_resp,
+                         turns=fixed_length_turn, config=config, model_path=albert_path,
+                         freeze_bert=freeze_bert)
+    params = model.get_default_params()
+    params['task'] = cls_task
+    model.params = params
+    model.build()
+    model = model.to(device)
+    model = model.float()
+
+    num_training_steps = (train_data.shape[0] // batch_size + 1) * epochs
+
+    optimizer = RAdam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    step_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_training_steps // epochs,
+                                                     num_training_steps=num_training_steps)
+
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        trainloader=train_dataloader,
+        validloader=valid_dataloader,
+        epochs=epochs,
+        l2_reg=l2_reg,
+        step_scheduler=step_scheduler,
+        save_dir=f"albert_{name}",
+        checkpoint=checkpoint_file
+    )
+
+    logger.info("开始训练模型")
+    trainer.run()
+
+    logger.info("----------------------------------------------------------------------")

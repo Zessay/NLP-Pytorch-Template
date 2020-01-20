@@ -18,6 +18,13 @@ from pathlib import Path
 from collections import OrderedDict
 import random
 import torch
+import torch.nn as nn
+import cProfile
+import pstats
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 ## ------------- 定义一些通用的的工具类 ---------------------
 
@@ -250,13 +257,13 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
     for h in hooks:
         h.remove()
 
-    print("-----------------------------------------------------------------------")
+    logger.info("-----------------------------------------------------------------------")
     if show_input is True:
         line_new = f"{'Layer (type)':>25}  {'Input Shape':>25} {'Param #':>15}"
     else:
         line_new = f"{'Layer (type)':>25}  {'Output Shape':>25} {'Param #':>15}"
-    print(line_new)
-    print("=======================================================================")
+    logger.info(line_new)
+    logger.info("=======================================================================")
 
     total_params = 0
     total_output = 0
@@ -285,16 +292,39 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
             if summary[layer]["trainable"] == True:
                 trainable_params += summary[layer]["nb_params"]
 
-        print(line_new)
+        logger.info(line_new)
 
-    print("=======================================================================")
-    print(f"Total params: {total_params:0,}")
-    print(f"Trainable params: {trainable_params:0,}")
-    print(f"Non-trainable params: {(total_params - trainable_params):0,}")
-    print("-----------------------------------------------------------------------")
+    logger.info("=======================================================================")
+    logger.info(f"Total params: {total_params:0,}")
+    logger.info(f"Trainable params: {trainable_params:0,}")
+    logger.info(f"Non-trainable params: {(total_params - trainable_params):0,}")
+    logger.info("-----------------------------------------------------------------------")
 
 
-## ------------- 定义一些模型中使用的工具类 ---------------------
+def do_cprofile(filename, do_prof=True, sort_key="tottime"):
+    """
+    用于性能分析的装饰器函数
+    :param filename: 表示分析结果保存的文件路径和名称
+    """
+    def wrapper(func):
+        def profiled_func(*args, **kwargs):
+            # 获取环境变量表示
+            if do_prof:
+                profile = cProfile.Profile()
+                ## 开启性能分析的对象
+                profile.enable()
+                result = func(*args, **kwargs)
+                profile.disable()
+                ## 默认按照总计用时排序
+                ps = pstats.Stats(profile).sort_stats(sort_key)
+                ps.dump_stats(filename)
+            else:
+                result = func(*args, **kwargs)
+            return result
+    return wrapper
+
+
+## ------------- 定义一些模型中使用的工具方法 ---------------------
 
 def is_number(token: str) -> bool:
     """判断输入的字符串是否是数字"""
@@ -308,20 +338,17 @@ def flatten_list(input_: list) -> list:
     """将多层嵌套的列表结构展开"""
     output = []
     for l in input_:
-        if isinstance(l, list):
-            output.extend(flatten_list(output))
+        if (isinstance(l, list)) or (isinstance(l, np.ndarray)):
+            output.extend(flatten_list(l))
         else:
             output.append(l)
     return output
 
-
 def one_hot(indices: np.ndarray, num_classes: int) -> np.ndarray:
     """将输入的一系列类别转换为onehot形式"""
-    length = len(indices)
-    vec = np.zeros((length, num_classes), dtype=np.int64)
-    vec[indices] = 1
-    return vec
-
+    one_vec = np.eye(num_classes)
+    one_hot = one_vec[indices]
+    return one_hot
 
 def sort_and_couple(labels: np.ndarray, scores: np.ndarray) -> np.ndarray:
     """根据预测的概率值从大到小进行排序"""
@@ -355,3 +382,5 @@ def _bfs(base):
     return base.__subclasses__() + sum([
         _bfs(subclass) for subclass in base.__subclasses__()], [])
 
+
+## -----------------

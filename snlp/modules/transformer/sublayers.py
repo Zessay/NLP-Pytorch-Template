@@ -11,8 +11,9 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 import torch.nn.functional as F
-import numpy as np
+from .utils import gelu_new
 
 class ScaledDotProductAttention(nn.Module):
     """
@@ -73,6 +74,14 @@ class MultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.init_weights()
+
+    def init_weights(self):
+        init.xavier_normal_(self.w_qs.weight)
+        init.xavier_normal_(self.w_ks.weight)
+        init.xavier_normal_(self.w_vs.weight)
+        init.xavier_normal_(self.fc.weight)
+
 
     def forward(self, q, k, v, mask=None):
         """
@@ -120,6 +129,11 @@ class PositionwiseFeedForward(nn.Module):
         self.w_2 = nn.Linear(d_hid, d_in)  # position-wise
         self.layer_norm = nn.LayerNorm(d_in, eps=1e-6)
         self.dropout = nn.Dropout(dropout)
+        self.init_weights()
+
+    def init_weights(self):
+        init.xavier_normal_(self.w_1.weight)
+        init.xavier_normal_(self.w_2.weight)
 
     def forward(self, x):
         """

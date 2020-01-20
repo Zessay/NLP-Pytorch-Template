@@ -46,7 +46,7 @@ class RankHingeLoss(nn.Module):
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor=None):
         """
         Calculate rank hinge loss
-        :param y_pred: 预测结果，二维的，但是只有一个值，也就是最后一维只有一个神经元
+        :param y_pred: 预测结果，二维的，但是只有一个值，也就是最后一维只有一个神经元，这是概率值
         :param y_true: 真实标签值
         :return:
         """

@@ -23,11 +23,13 @@ class CrossAttentionLayer(nn.Module):
     :param d_v: int型，每个head中value向量的维度
     :param dropout:
     """
-    def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
+    def __init__(self, d_model, d_inner, n_head, d_k, d_v, is_layer_norm=False, dropout=0.1):
         super(CrossAttentionLayer, self).__init__()
         self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
         self.pos_ffn = PositionwiseFeedForward(d_model, d_inner, dropout=dropout)
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.is_layer_norm = is_layer_norm
+        if is_layer_norm:
+            self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
     def forward(self, query, key, value, cross_attn_mask=None):
         """
@@ -41,7 +43,8 @@ class CrossAttentionLayer(nn.Module):
             query, key, value, mask=cross_attn_mask)
         # [B, L, d_model]
         enc_output = self.pos_ffn(enc_output)
-        enc_output = self.layer_norm(enc_output)
+        if self.is_layer_norm:
+            enc_output = self.layer_norm(enc_output)
 
         return enc_output, enc_slf_attn
 

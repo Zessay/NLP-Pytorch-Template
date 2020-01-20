@@ -9,10 +9,14 @@
 @description: 用于解析激活函数，损失，优化器以及metric
 '''
 import typing
+import torch
+import math
 import torch.nn as nn
 import torch.optim as optim
 
 from snlp.base import BaseMetric
+from snlp.optimizer import RAdam, AdamW, PlainRAdam, \
+    AdaBound, AdaFactor, Lamb, Lookahead, Nadam, NovoGrad, Ralamb, RaLars, SGDW
 
 
 activation = nn.ModuleDict([
@@ -71,7 +75,19 @@ optimizer = dict({
     'lbfgs': optim.LBFGS,
     'rmsprop': optim.RMSprop,
     'rprop': optim.Rprop,
-    'sgd': optim.SGD
+    'sgd': optim.SGD,
+    'radam': RAdam,
+    'adamw': AdamW,
+    'plainrdam': PlainRAdam,
+    'adabound': AdaBound,
+    'adafactor': AdaFactor,
+    'lamb': Lamb,
+    'lookahead': Lookahead,
+    'nadam': Nadam,
+    'novograd': NovoGrad,
+    'ralamb': Ralamb,
+    'ralars': RaLars,
+    'sgdw': SGDW
 })
 
 

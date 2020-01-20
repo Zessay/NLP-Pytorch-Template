@@ -23,7 +23,7 @@ class RankCrossEntropyLoss(nn.Module):
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         """
         Calculate rank cross entropy loss.
-        :param y_pred: 二维的，但是最后一层神经元只有1个
+        :param y_pred: 二维的，但是最后一层神经元只有1个，这是概率值
         :param y_true: 二维的，表示归一化之后的排序值
         :return:
         """

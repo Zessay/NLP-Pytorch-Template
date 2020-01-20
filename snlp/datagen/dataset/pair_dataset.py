@@ -22,7 +22,8 @@ class PairDataset(BaseDataset):
         super().__init__(callbacks=callbacks)
         self.df = df
         self._columns = list(df.columns)
-        self._columns.remove(constants.LABEL)
+        if constants.LABEL in self._columns:
+            self._columns.remove(constants.LABEL)
         self._num_neg = num_neg
         self.sample()
 

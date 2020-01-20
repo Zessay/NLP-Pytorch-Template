@@ -215,17 +215,23 @@ class MultiQAPadding(BaseCallback):
     Pad the data for Multi-QA data.
     """
     def __init__(self,
-                 fixed_length_uttr: int=None,
-                 fixed_length_resp: int=None,
-                 fixed_length_turn: int=None,
+                 fixed_length_uttr: typing.Optional[int]=None,
+                 fixed_length_resp: typing.Optional[int]=None,
+                 fixed_length_turn: typing.Optional[int]=None,
+                 char: bool=False,   # 是否需要对char进行填充
+                 fixed_length_uttr_char: typing.Optional[int]=None,
+                 fixed_length_resp_char: typing.Optional[int]=None,
                  pad_word_value: typing.Union[int, str]=0,
                  pad_word_mode: str='post',
                  dtype=np.int32):
         self._fixed_length_uttr = fixed_length_uttr
         self._fixed_length_resp = fixed_length_resp
         self._fixed_length_turn = fixed_length_turn
+        self._fixed_length_uttr_char = fixed_length_uttr_char
+        self._fixed_length_resp_char = fixed_length_resp_char
         self._pad_word_value = pad_word_value
         self._pad_word_mode = pad_word_mode
+        self._char = char
         self._dtype = dtype
 
     def on_batch(self, x: dict, y: np.ndarray):
@@ -239,11 +245,21 @@ class MultiQAPadding(BaseCallback):
         pad_length_uttr = max(x[constants.UTTRS_LEN])
         pad_length_resp = max(x[constants.RESP_LEN])
         pad_length_turn = self._fixed_length_turn
+        if self._char:
+            pad_length_uttr_char = max(x[constants.UTTRS_CHAR_LEN])
+            pad_length_resp_char = max(x[constants.RESP_CHAR_LEN])
+
+
 
         if self._fixed_length_uttr is not None:
             pad_length_uttr = self._fixed_length_uttr
         if self._fixed_length_resp is not None:
             pad_length_resp = self._fixed_length_resp
+        if self._fixed_length_uttr_char is not None:
+            pad_length_uttr_char = self._fixed_length_uttr_char
+        if self._fixed_length_resp_char is not None:
+            pad_length_resp_char = self._fixed_length_resp_char
+
 
         for key, value in x.items():
             if key == constants.UTTRS:
@@ -252,6 +268,14 @@ class MultiQAPadding(BaseCallback):
                 _padding_3D(value, padded_value, word_mode='pre', char_mode=self._pad_word_mode)
             elif key == constants.RESP:
                 padded_value = np.full([batch_size, pad_length_resp],
+                                       self._pad_word_value, dtype=self._dtype)
+                _padding_2D(value, padded_value, mode=self._pad_word_mode)
+            elif key == constants.UTTRS_CHAR:
+                padded_value = np.full([batch_size, pad_length_turn, pad_length_uttr_char],
+                                       self._pad_word_value, dtype=self._dtype)
+                _padding_3D(value, padded_value, word_mode='pre', char_mode=self._pad_word_mode)
+            elif key == constants.RESP_CHAR:
+                padded_value = np.full([batch_size, pad_length_resp_char],
                                        self._pad_word_value, dtype=self._dtype)
                 _padding_2D(value, padded_value, mode=self._pad_word_mode)
             else:

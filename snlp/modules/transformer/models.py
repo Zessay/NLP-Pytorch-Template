@@ -89,24 +89,36 @@ class Encoder(nn.Module):
     :param dropout: float型
     :param n_position: int型，表示序列最大的长度
     :param word_embedding: ndarray或者torch.tensor类型，表示传入的embedding矩阵
+    :param is_word_embedding: 是否需要添加word embedding
+    :param is_pos_embedding: 是否需要加上pos embedding
+    :param is_layer_norm： 输出之前是否需要LayerNorm
     """
     def __init__(
             self, n_src_vocab, d_word_vec, n_layers, n_head, d_k, d_v,
             d_model, d_inner, pad_idx, dropout=0.1, n_position=200,
-            word_embedding=None, freeze=False):
+            word_embedding=None, freeze=False,
+            is_word_embedding=True, is_pos_embedding=True, is_layer_norm=True):
 
         super().__init__()
-        if word_embedding is not None:
-            self.src_word_emb = nn.Embedding.from_pretrained(word_embedding, freeze=freeze)
-        else:
-            self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=pad_idx)
+        if is_word_embedding:
+            if word_embedding is not None:
+                self.src_word_emb = nn.Embedding.from_pretrained(word_embedding, freeze=freeze)
+            else:
+                self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=pad_idx)
         ## 定义词向量和位置向量相加的类
-        self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)
+        if is_pos_embedding:
+            self.position_enc = PositionalEncoding(d_word_vec, n_position=n_position)
         self.dropout = nn.Dropout(p=dropout)
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        if is_layer_norm:
+            self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+
+        # 是否需要进行embedding
+        self.is_word_embedding = is_word_embedding
+        self.is_pos_embedding = is_pos_embedding
+        self.is_layer_norm = is_layer_norm
 
     def forward(self, src_seq, src_mask, return_attns=False):
         """
@@ -117,9 +129,15 @@ class Encoder(nn.Module):
         """
 
         enc_slf_attn_list = []
+        # 可能是[B, L]或者[B, L, d_model]
+        enc_output = src_seq
 
         # [B, L, d_model]
-        enc_output = self.dropout(self.position_enc(self.src_word_emb(src_seq)))
+        if self.is_word_embedding:
+            enc_output = self.src_word_emb(enc_output)
+        if self.is_pos_embedding:
+            enc_output = self.position_enc(enc_output)
+        enc_output = self.dropout(enc_output)
 
         for enc_layer in self.layer_stack:
             # [B, L, d_model]和[B, L, L]
@@ -128,7 +146,8 @@ class Encoder(nn.Module):
 
         # 经过所有编码器之后经过一次LayerNorm
         # [B, L, d_model]
-        enc_output = self.layer_norm(enc_output)
+        if self.is_layer_norm:
+            enc_output = self.layer_norm(enc_output)
 
         if return_attns:
             return enc_output, enc_slf_attn_list
@@ -139,8 +158,6 @@ class Encoder(nn.Module):
 class StackedEncoder(nn.Module):
     """
     定义带有自注意力的多层编码器模块，将所有曾的编码结果全部返回
-    :param n_src_vocab: int型，词表的大小
-    :param d_word_vec: int型，表示词向量的维度
     :param n_layers: int型，表示Encoder的层数
     :param n_head: int型，表示head的数量
     :param d_k: int型，表示每一个head中key的维度
@@ -159,7 +176,8 @@ class StackedEncoder(nn.Module):
 
         super().__init__()
         ## 定义词向量和位置向量相加的类
-        self.position_enc = PositionalEncoding(d_model, n_position=n_position)
+        if add_position:
+            self.position_enc = PositionalEncoding(d_model, n_position=n_position)
         self.dropout = nn.Dropout(p=dropout)
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
@@ -175,10 +193,10 @@ class StackedEncoder(nn.Module):
         :param return_attns: bool型，是否返回每一层自注意力的值
         :return:
         """
-
         enc_output_list = []
         enc_slf_attn_list = []
 
+        # non_pad_mask = src_mask.squeeze(1).unsqueeze(-1)
         # [B, L, d_model]
         if self.add_pos:
             enc_output = self.dropout(self.position_enc(src_seq))
@@ -188,14 +206,11 @@ class StackedEncoder(nn.Module):
         for enc_layer in self.layer_stack:
             # [B, L, d_model]和[B, L, L]
             enc_output, enc_slf_attn = enc_layer(enc_output, slf_attn_mask=src_mask)
-            enc_output_list += [enc_output]  # 将每一层的结果按顺序添加进去
+            # 所有输出经过一次LayerNorm再添加进去
+            enc_output_list += [self.layer_norm(enc_output)]  # 将每一层的结果按顺序添加进去
             enc_slf_attn_list += [enc_slf_attn] if return_attns else []
 
-        # 所有输出经过一次LayerNorm
-        # [NL, B, L, d_model]，NL表示编码器的层数
-        for i, enc_output in enumerate(enc_output_list):
-            enc_output_list[i] = self.layer_norm(enc_output)
-
+        # [NL, B, L, d_model]，表示enc_output_list的维度，这里NL表示编码器的层数
         if return_attns:
             return enc_output_list, enc_slf_attn_list
         return enc_output_list,

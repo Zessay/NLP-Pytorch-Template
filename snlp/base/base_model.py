@@ -15,6 +15,7 @@ import typing
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 
 import snlp.callbacks as callbacks
 import snlp.preprocessors as preprocessors
@@ -198,6 +199,7 @@ class BaseModel(nn.Module, abc.ABC):
                               embedding_dim: int=0,
                               freeze: bool=True,
                               embedding: typing.Optional[np.ndarray]=None,
+                              padding_idx: int=0,
                               **kwargs) -> nn.Module:
         if isinstance(embedding, np.ndarray):
             return nn.Embedding.from_pretrained(
@@ -207,7 +209,8 @@ class BaseModel(nn.Module, abc.ABC):
         else:
             return nn.Embedding(
                 num_embeddings=num_embeddings,
-                embedding_dim=embedding_dim
+                embedding_dim=embedding_dim,
+                padding_idx=padding_idx
             )
 
     def _make_default_embedding_layer(self,
@@ -255,8 +258,10 @@ class BaseModel(nn.Module, abc.ABC):
                                in_features: int=0,
                                out_features: int=0,
                                activation: nn.Module=nn.ReLU()) -> nn.Module:
+        single_perceptron = nn.Linear(in_features, out_features)
+        init.xavier_normal_(single_perceptron.weight)
         return nn.Sequential(
-            nn.Linear(in_features, out_features),
+            single_perceptron,
             activation
         )
 

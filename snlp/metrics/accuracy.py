@@ -25,8 +25,12 @@ class Accuracy(BaseMetric):
         """
         Calculate accuracy.
         :param y_true: 一维ndarray
-        :param y_pred: 二维ndarray，表示预测的概率
+        :param y_pred: 二维ndarray，表示预测的概率；或者是一维的，最后一个神经元即表示概率
         :return:
         """
-        y_pred = np.argmax(y_pred, axis=1)
+        if len(y_pred.shape) > 1:
+            y_pred = np.argmax(y_pred, axis=1)
+        else:
+            y_pred = (y_pred > 0.5).reshape(-1).astype(int)
+            y_true = y_true.reshape(-1)
         return np.sum(y_pred == y_true) / float(y_true.size)

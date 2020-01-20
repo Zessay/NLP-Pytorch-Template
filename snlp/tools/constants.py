@@ -12,7 +12,7 @@ import os
 
 # ----------------- log文件相关配置 -------------------
 PACKAGE_NAME = os.path.basename(os.path.dirname(os.getcwd()))
-LOG_FILE = "./train.log" # log保存的路径
+LOG_FILE = "./train_msn.log" # log保存的路径
 
 # ----------------- DataFrame字段配置 -----------------
 ## 标签字段的名称
@@ -38,8 +38,15 @@ NGRAM_RIGHT = 'ngram_right'
 ######## -------- 用于多轮QA的字段名 ----------
 UTTRS = 'utterances'
 RESP = 'response'
+LAST = 'last'  # 表示最近的utterance
 UTTRS_LEN = 'utterances_len'
 RESP_LEN = 'response_len'
+TURNS = 'turns'
+UTTRS_CHAR = 'utterances_char'
+RESP_CHAR = 'response_char'
+UTTRS_CHAR_LEN = 'utterances_char_len'
+RESP_CHAR_LEN = 'response_char_len'
+
 
 ## 用于排序比较文本长度的字段
 SORT_LEN = 'response_len'

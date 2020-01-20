@@ -1,0 +1,15 @@
+tensorflow-gpu
+pytorch
+dill
+numpy
+pandas
+hyperopt
+flask
+fuzzywuzzy
+jieba
+pkuseg
+boto3
+nltk
+sentencepiece
+tokenizers
+gensim

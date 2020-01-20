@@ -12,6 +12,7 @@
 from snlp.base import StatefulUnit
 import snlp.tools.constants as constants
 
+
 class TermIndex(dict):
     """Map term to index"""
     def __missing__(self, key):
@@ -41,7 +42,11 @@ class Vocabulary(StatefulUnit):
 
     def transform(self, input_: list):
         """Transform a list of tokens to corresponding indices"""
-        if type(input_[0]) == list:
-            return [[self._context['term_index'][token] for token in uttr] for uttr in input_]
-        else:
-            return [self._context['term_index'][token] for token in input_]
+        try:
+            if type(input_[0]) == list:
+                return [[self._context['term_index'][token] for token in uttr] for uttr in input_]
+            else:
+                return [self._context['term_index'][token] for token in input_]
+        except Exception as e:
+            print(input_)
+            raise ValueError(e)

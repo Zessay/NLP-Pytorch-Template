@@ -35,6 +35,9 @@ from snlp.tools.log import logger
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
+fixed_length_uttr = 20
+fixed_length_resp = 20
+fixed_length_turn = 5
 
 start = time.time()
 cls_task = tasks.Classification(num_classes=2, losses = nn.CrossEntropyLoss())
@@ -70,12 +73,16 @@ embedding_matrix = word_embedding.build_matrix(preprocessor.context['term_index'
 logger.info("使用Dataset和DataLoader对数据进行封装")
 train_dataset = PairDataset(train, num_neg=0)
 valid_dataset = PairDataset(valid, num_neg=0)
-padding = MultiQAPadding(fixed_length_uttr=20, fixed_length_resp=20, fixed_length_turn=4)
+padding = MultiQAPadding(fixed_length_uttr=fixed_length_uttr, fixed_length_resp=fixed_length_resp,
+                         fixed_length_turn=fixed_length_turn)
 
 train_dataloader = DictDataLoader(train_dataset, batch_size=16,
+                                  turns=fixed_length_turn,
                                   shuffle=False,
-                                  sort=False, callback=padding)
+                                  sort=False,
+                                  callback=padding)
 valid_dataloader = DictDataLoader(valid_dataset, batch_size=16,
+                                  turns=fixed_length_turn,
                                   shuffle=False,
                                   sort=False,
                                   callback=padding)
@@ -85,7 +92,7 @@ valid_dataloader = DictDataLoader(valid_dataset, batch_size=16,
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 logger.info("定义模型和参数")
-model = DAM()
+model = DAM(uttr_len=fixed_length_uttr, resp_len=fixed_length_resp, turns=fixed_length_turn)
 params = model.get_default_params()
 params['task'] = cls_task
 params['embedding'] = embedding_matrix
@@ -93,7 +100,7 @@ model.params = params
 model.build()
 model = model.float()
 
-optimizer = RAdam(model.parameters())
+optimizer = RAdam(model.parameters(), lr=1e-5)
 
 trainer = Trainer(
     model=model,

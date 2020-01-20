@@ -14,6 +14,7 @@ import pandas as pd
 from tqdm import tqdm
 from snlp.base import StatefulUnit, Unit
 from snlp.base.units import Vocabulary
+from snlp.tools.common import flatten_list
 
 def build_unit_from_df(unit: StatefulUnit,
                        data: pd.DataFrame,
@@ -24,7 +25,7 @@ def build_unit_from_df(unit: StatefulUnit,
     corpus = []
     if flatten:
         for col in columns:
-            corpus.extend(sum(data[col].values.tolist(), [])) # 将二维列表展开
+            corpus.extend(flatten_list(data[col].values.tolist())) # 将二维列表展开
     else:
         for col in columns:
             corpus.extend(data[col].values.tolist())

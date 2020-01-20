@@ -10,6 +10,8 @@
 '''
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torch.nn.init as init
 
 from snlp.params.param_table import ParamTable
 from snlp.params.param import Param
@@ -17,30 +19,44 @@ from snlp.tools.parse import parse_activation
 from snlp.base.base_model import BaseModel
 from snlp.modules.transformer import StackedEncoder
 from snlp.modules.transformer.layers import CrossAttentionLayer
-from snlp.modules.transformer.models import get_pad_mask
+from snlp.modules.transformer.models import get_pad_mask, PositionalEncoding
 
 class DAM(BaseModel):
-    def __init__(self):
+    def __init__(self, uttr_len=20, resp_len=20, turns=5):
+        self.uttr_len = uttr_len
+        self.resp_len = resp_len
+        self.turns = turns
         super(DAM, self).__init__()
 
-    @classmethod
-    def get_default_params(cls) -> ParamTable:
+    def get_default_params(self) -> ParamTable:
         # 定义包含Emebedding层和MLP层
         params = super().get_default_params(with_embedding=True,
-                                            with_multi_layer_perceptron=True)
+                                            with_multi_layer_perceptron=False)
 
-        # ----------------- 定义关于输入长度的参数 ----------------------
+        params['embedding_freeze'] = False
+        # ----------------- 定义是否需要turn-embedding的参数 ----------------------
         params.add(Param(
-            name='uttrs_len', value=20,
-            desc="The number of words of per utterance."
+            name='is_turn_emb', value=False,
+            desc="Whether to add turn embedding."
+        ))
+
+        # ---------------- 定义是否需要position-embedding的参数 -------------------
+        params.add(Param(
+            name='is_position_emb', value=True,
+            desc="Whether to add position embedding."
         ))
         params.add(Param(
-            name='resp_len', value=20,
-            desc="The number of words of response."
+            name='n_position', value=200,
+            desc="The positions of position embedding."
+        ))
+        # -------------- 通用的参数和标志 -------------------
+        params.add(Param(
+            name='dropout', value=0.2,
+            desc="The dropout of encoder."
         ))
         params.add(Param(
-            name='turns', value=4,
-            desc="The prev turns of the dialogue to consider to select the response."
+            name='is_layer_norm', value=True,
+            desc="Whether to use layer norm before output."
         ))
 
         # --------------- Encoder and Cross Attention -----------------
@@ -69,21 +85,13 @@ class DAM(BaseModel):
             name='d_inner', value=768,
             desc="The hidden size of FFN."
         ))
-        params.add(Param(
-            name='dropout', value=0.1,
-            desc="The dropout of encoder."
-        ))
-        params.add(Param(
-            name='n_position', value=512,
-            desc="The positions of a sentence."
-        ))
 
         # ----------------- The two 3D Conv and Pool ---------------------
 
         # 关于两个3D卷积层的参数
         ## 第一个3D卷积层
         params.add(Param(
-            name='conv1_channels', value=256,
+            name='conv1_channels', value=64,
             desc="The output channels of first Conv3D."
         ))
         params.add(Param(
@@ -102,23 +110,40 @@ class DAM(BaseModel):
             name='conv1_activation', value="relu",
             desc="The activation first Conv3D."
         ))
+
+        ## 第一个池化之前的pad层
+        ## 如果utterance是奇数，池化之前需要一层padding
+        ## 如果turns和uttr_len都是奇数
+        if self.turns & 1 and self.uttr_len & 1:
+            value = (0, 0, 0, 1, 1, 0)
+        elif self.turns & 1:
+            value = (0, 0, 0, 0, 1, 0)
+        elif self.uttr_len & 1:
+            value = (0, 0, 0, 1, 0, 0)
+        else:
+            value = (0, 0, 0, 0, 0, 0)
+        params.add(Param(
+            name='pad_size', value=value,
+            desc= "Padding before the first Pool3D if the turn is odd."
+        ))
+
         ## 第一个3D池化层
         params.add(Param(
             name='pool1_kernel', value=(2, 4, 4),
-            desc="The kernel size of first Pool3D, the output size is 1/4 of the origin."
+            desc="The kernel size of first Pool3D, the output size is 1/2 or 1/4 of the origin."
         ))
         params.add(Param(
             name='pool1_stride', value=(2, 4, 4),
-            desc="The stride of first Pool3D, the output size is 1/4 of the origin."
+            desc="The stride of first Pool3D, the output size is 1/2 or 1/4 of the origin."
         ))
         params.add(Param(
             name='pool1_padding', value=(0, 0, 0),
-            desc="The padding of first Pool3D, the output size is 1/4 of the origin."
+            desc="The padding of first Pool3D, the output size is 1/2 or 1/4 of the origin."
         ))
 
         ## 第二个3D卷积层
         params.add(Param(
-            name='conv2_channels', value=512,
+            name='conv2_channels', value=128,
             desc="The output channels of first Conv3D."
         ))
         params.add(Param(
@@ -138,18 +163,24 @@ class DAM(BaseModel):
             desc="The activation second Conv3D."
         ))
         ## 第二个3D池化层
+        value = (self.turns // 2, self.uttr_len // 4, self.resp_len // 4)
         params.add(Param(
-            name='pool2_kernel', value=(2, 4, 4),
-            desc="The kernel size of second Pool3D, the output size is 1/4 of the origin."
+            name='pool2_kernel', value=value,
+            desc="The kernel size of second Pool3D, all dim size of the output is 1."
         ))
         params.add(Param(
-            name='pool2_stride', value=(2, 4, 4),
-            desc="The stride of second Pool3D, the output size is 1/4 of the origin."
+            name='pool2_stride', value=value,
+            desc="The stride of second Pool3D, all dim size of the output is 1."
         ))
         params.add(Param(
             name='pool2_padding', value=(0, 0, 0),
-            desc="The padding of second Pool3D, the output size is 1/4 of the origin."
+            desc="The padding of second Pool3D, all dim size of the output is 1."
         ))
+
+        # --------- Output Layer --------------------
+        # params['mlp_num_units'] = 512
+        # params['mlp_num_layers'] = 1
+        # params['mlp_num_fan_out'] = 128
         return params
 
     def build(self):
@@ -158,7 +189,16 @@ class DAM(BaseModel):
         ## 返回embedding层
         self.word_emb = self._make_default_embedding_layer()
         self.word_proj = nn.Linear(self._params['embedding_output_dim'],
-                                   self._params['d_model'])
+                                   self._params['d_model'], bias=False)
+
+        if self._params['is_position_emb']:
+            self.position_emb = PositionalEncoding(d_hid=self._params['d_model'],
+                                                   n_position=self._params['n_position'])
+
+        # 用于turn embedding
+        if self._params['is_turn_emb']:
+            self.turn_emb = nn.Embedding(self.turns+1, self._params['d_model'],
+                                         padding_idx=self._params['padding_idx'])
 
 
         # 得到多粒度表征，n_layers表示表征的数量，记为L
@@ -171,27 +211,29 @@ class DAM(BaseModel):
             d_inner=self._params['d_inner'],
             dropout=self._params['dropout'],
             n_position=self._params['n_position'],
-            add_position=True
+            add_position=False
         )
 
         # utterance和response的交叉attention
-        self.U_R_att = CrossAttentionLayer(
+        ## 共享权重
+        self.cross_att = CrossAttentionLayer(
             d_model=self._params['d_model'],
             d_inner=self._params['d_inner'],
             n_head=self._params['n_head'],
             d_k=self._params['d_k'],
             d_v=self._params['d_v'],
+            is_layer_norm=self._params['is_layer_norm'],
             dropout=self._params['dropout']
         )
 
-        self.R_U_att = CrossAttentionLayer(
-            d_model=self._params['d_model'],
-            d_inner=self._params['d_inner'],
-            n_head=self._params['n_head'],
-            d_k=self._params['d_k'],
-            d_v=self._params['d_v'],
-            dropout=self._params['dropout']
-        )
+        # self.R_U_att = CrossAttentionLayer(
+        #     d_model=self._params['d_model'],
+        #     d_inner=self._params['d_inner'],
+        #     n_head=self._params['n_head'],
+        #     d_k=self._params['d_k'],
+        #     d_v=self._params['d_v'],
+        #     dropout=self._params['dropout']
+        # )
 
         self.conv1 = nn.Conv3d(2*(self._params['n_layers']+1), self._params['conv1_channels'],
                                kernel_size=self._params['conv1_kernel'],
@@ -199,6 +241,9 @@ class DAM(BaseModel):
                                padding=self._params['conv1_padding'])
         self.pool1 = nn.MaxPool3d(kernel_size=self._params['pool1_kernel'],
                                   stride=self._params['pool1_stride'])
+        # 如果是5轮，需要进行一次pad防止丢失最后一轮信息
+        self.cons_pad = nn.ConstantPad3d(padding=self._params['pad_size'], value=0)
+
         self.conv2 = nn.Conv3d(self._params['conv1_channels'], self._params['conv2_channels'],
                                kernel_size=self._params['conv2_kernel'],
                                stride=self._params['conv2_stride'],
@@ -206,107 +251,116 @@ class DAM(BaseModel):
         self.pool2 = nn.MaxPool3d(kernel_size=self._params['pool2_kernel'],
                                   stride=self._params['pool2_stride'])
 
-        self.mlps = self._make_multi_perceptron_layer(
+        self.conv1_activation = parse_activation(self._params['conv1_activation'])
+        self.conv2_activation = parse_activation(self._params['conv2_activation'])
+
+        # self.mlps = self._make_multi_perceptron_layer(
+        #     self._params['conv2_channels']
+        # )
+
+        # self.output = self._make_output_layer(
+        #     self._params['mlp_num_fan_out']
+        # )
+        self.output = self._make_output_layer(
             self._params['conv2_channels']
         )
+        self.dropout = nn.Dropout(self._params['dropout'])
 
-        self.output = self._make_output_layer(
-            self._params['mlp_num_fan_out']
-        )
+        self.init_weights()
+
+    def init_weights(self):
+        init.xavier_normal_(self.word_proj.weight)
+        init.xavier_normal_(self.conv1.weight)
+        init.xavier_normal_(self.conv2.weight)
+        init.xavier_normal_(self.output.weight)
+        if self._params['is_turn_emb']:
+            init.orthogonal_(self.turn_emb.weight)
 
     def forward(self, inputs):
-        # [B, NU, Lu] 这里的length是所有utterance合并的
+        """
+        NU表示utterance的轮次，Lu表示一个utterance的长度，Lr表示一个response的长度
+        """
+        # ------------- 对utterance进行处理 -------------------
+        ## [B, NU, Lu] 这里的Lu表示每一个utterance经过padding的长度
         utterances = inputs['utterances']
+        bsz = utterances.size(0)  ## 获取当前的batch_size
+        ## [B*Nu, 1, Lu]
+        uttrs_mask = get_pad_mask(utterances, self._params['padding_idx']).view(bsz*self.turns, 1, self.uttr_len)
+        ## [B*Nu, Lu, 1]
+        uttrs_emb_mask = uttrs_mask.squeeze(dim=-2).unsqueeze(dim=-1)
+        ## [B, Nu, Lu, emb_output]
+        uttrs_emb = self.word_emb(utterances)
+        ## [B*Nu, Lu, d_model]
+        uttrs_emb = self.word_proj(uttrs_emb)
+        ## 定义用于表示turn的张量
+        ### [1, Nu]
+        turns_num = inputs['turns']
+        if self._params['is_turn_emb']:
+            ## [1, Nu, 1, d_model]
+            turns_embedding = self.turn_emb(turns_num).unsqueeze(dim=-2)
+            ## [B, Nu, Lu, d_model]
+            uttrs_emb = uttrs_emb + turns_embedding
+        ## [B*Nu, Lu, d_model]
+        uttrs_emb = uttrs_emb.view(bsz*self.turns, self.uttr_len, -1)
+        if self._params['is_position_emb']:
+            ### [B*Nu, Lu, d_model]
+            uttrs_emb = self.position_emb(uttrs_emb)
+        ## [B*Nu, Lu, d_model]，对embedding进行mask
+        uttrs_emb = uttrs_emb * uttrs_emb_mask
+        ## [NL, B*Nu, Lu, d_model]，自编码
+        uttrs_es, *_ = self.encoder(uttrs_emb, uttrs_mask)
+        uttrs_es_list = [uttrs_emb] + uttrs_es
+        L_layer = len(uttrs_es_list)
+        ## [B*Nu*(NL+1), Lu, d_model]
+        uttrs_stack = torch.stack(uttrs_es_list, dim=0).transpose(0, 1).contiguous().view(bsz*self.turns*L_layer, self.uttr_len, -1)
+        # ---------------- 得到response的所有层的结果 -------------------
         # [B, Lr]
         response = inputs['response']
-        b_size, L_r = response.size()  # 获取batch的大小
-        L_u = utterances.size(-1)  # 每一个utterance的长度
-
-        ## 使用torch.split对所有的utterances进行分隔
-        ## 如果指定split_size_or_sections是一个int型，则表明每个uttr的大小
-        ## 这里为了之后拼接，所有的utterances的长度必须相同
-        ## 如果是list型，则表示具体指明每一个utterances的大小
-        if self._params['uttrs_len'] is not None:
-            uttrs = torch.unbind(utterances, dim=1)
-
-        # ---------------- 得到response的所有层的结果 -------------------
-        ## [B, Lr, d_model]
-
-        rep_emb = self.word_proj(self.word_emb(response))
         ## [B, 1, Lr]
-        rep_mask = get_pad_mask(response, self._params['padding_idx'])
-        # [NL, B, Lr, d_model]
-        rep_es, *_ = self.encoder(rep_emb, rep_mask)
-        # [NL+1, B, Lr, d_model]
-        rep_es_list = [rep_emb] + rep_es
-        L_layer = len(rep_es_list)
+        resp_mask = get_pad_mask(response, self._params['padding_idx'])
+        ## [B, Lr, 1]
+        resp_emb_mask = resp_mask.squeeze(dim=-2).unsqueeze(dim=-1)
+        ## [B, Lr, emb_output]
+        resp_emb = self.word_emb(response)
+        ## [B, Lr, d_model]
+        resp_emb = self.word_proj(resp_emb)
+        if self._params['is_position_emb']:
+            resp_emb = self.position_emb(resp_emb)
+        resp_emb = resp_emb * resp_emb_mask
+        ## [NL, B, Lr, d_model]
+        resp_es, *_ = self.encoder(resp_emb, resp_mask)
+        ## [NL+1, B, Lr, d_model]
+        rep_es_list = [resp_emb] + resp_es
+        ## [NL+1, B, Lr, d_model]的tensor
+        resp_stack = torch.stack(rep_es_list, dim=0)
+        ## [B*Nu*(NL+1), Lr, d_model]
+        resp_stack = resp_stack.repeat(1, self.turns, 1, 1).transpose(0, 1).contiguous().view(bsz*self.turns*L_layer, self.resp_len, -1)
 
-        # --------------- 得到uttrs所有层的结果 -----------------------
-        uttrs_encs_list = []
-        UR_attns_list = [] # 保存U-R attention的结果
-        RU_attns_list = [] # 保存R-U attention的结果
-        for uttr in uttrs:
-            # [B, Lu, d_model]
-            uttr_emb = self.word_proj(self.word_emb(uttr))
-            # [B, 1, Lu]
-            uttr_mask = get_pad_mask(uttr, self._params['padding_idx'])
-            # [NL, B, Lu, d_model]
-            uttr_es_list, *_ = self.encoder(uttr_emb, uttr_mask)
-            # [NL+1, B, Lu, d_model]
-            uttr_es_list = [uttr_emb] + uttr_es_list
-
-            # 计算和每一层response的cross attention结果
-            ur_att_list, ru_att_list = [], []
-            ## 对NL+1层分别进行cross-attention
-            for i in range(len(rep_es_list)):
-                ## [B, Lu, d_model]
-                ur_, _ = self.U_R_att(uttr_es_list[i], rep_es_list[i], rep_es_list[i], rep_mask)
-                ## [B, Lr, d_model]
-                ru_, _ = self.R_U_att(rep_es_list[i], uttr_es_list[i], uttr_es_list[i], uttr_mask)
-                ur_att_list += [ur_]
-                ru_att_list += [ru_]
-            # [B, NL+1, L, d_model]
-            ur_concat = torch.cat(ur_att_list, dim=0).view(L_layer, b_size, L_u, self._params['d_model']).transpose(0, 1)
-            ru_concat = torch.cat(ru_att_list, dim=0).view(L_layer, b_size, L_r, self._params['d_model']).transpose(0, 1)
-            # 将同一个utterance的所有层进行拼接
-            # [B, NL+1, L, d_model]
-            uttr_concat = torch.cat(uttr_es_list, dim=0).view(L_layer, b_size, L_u, self._params['d_model']).transpose(0, 1)
-
-            UR_attns_list += [ur_concat]
-            RU_attns_list += [ru_concat]
-            uttrs_encs_list += [uttr_concat]
-        # ** 准备用于计算self-att match的张量 **
-        ## 上面得到所有utterances，维度为[B, NU, NL+1, Lu, d_model]，NU表示utterance轮数
-        Uttrs_encs = torch.cat(uttrs_encs_list, dim=0).view(-1, b_size, L_layer, L_u, self._params['d_model']).transpose(0, 1)
-        ## 张量维度[B, 1, NL+1, L_r, d_model]
-        Rep_encs = torch.cat(rep_es_list, dim=0).view(L_layer, b_size, L_r, self._params['d_model']).transpose(0, 1).unsqueeze(1)
-
-        # ** 准备用于计算cross-attn match的张量 **
-        ## 对attns进行拼接 [B, NU, NL+1, Lu, d_model]和[B, NU, NL+1, Lr, d_model]
-        UR_attns = torch.cat(UR_attns_list, dim=0).view(-1, b_size,L_layer, L_u, self._params['d_model']).transpose(0, 1)
-        RU_attns = torch.cat(RU_attns_list, dim=0).view(-1, b_size, L_layer, L_r, self._params['d_model']).transpose(0, 1)
-
+        # -------------------- 计算 Cross Attention --------------------------
+        ## [B*Nu*(NL+1), Lu, d_model]
+        UR_att, *_ = self.cross_att(uttrs_stack, resp_stack, resp_stack, resp_mask.repeat(self.turns*L_layer, 1, 1))
+        ## [B*Nu*(NL+1), Lr, d_model]
+        RU_att, *_ = self.cross_att(resp_stack, uttrs_stack, uttrs_stack, uttrs_mask.repeat(L_layer, 1, 1))
         # ------- 计算self-att match --------
         ## [B, NU, NL+1, Lu, Lr]
-        M_self = torch.matmul(Uttrs_encs, Rep_encs.transpose(3, 4))
-
+        ### **这里因为要计算相似度，注意要使用激活函数，避免发生梯度爆炸**
+        M_self = F.tanh(torch.matmul(uttrs_stack, resp_stack.transpose(1, 2)).view(bsz, self.turns, L_layer, self.uttr_len, self.resp_len))
         # ------- 计算cross-att match -------
         ## [B, NU, NL+1, Lu, Lr]
-        M_cross = torch.matmul(UR_attns, RU_attns.transpose(3, 4))
-
+        ### **这里因为要计算相似度，注意要使用激活函数，避免发生梯度爆炸**
+        M_cross = F.tanh(torch.matmul(UR_att, RU_att.transpose(1, 2)).view(bsz, self.turns, L_layer, self.uttr_len, self.resp_len))
         # [B, 2(NL+1), NU, Lu, Lr]
-        Q = torch.cat([M_self, M_cross], dim=2).transpose(1, 2)
+        output = torch.cat([M_self, M_cross], dim=2).transpose(1, 2)
 
-        conv1_activation = parse_activation(self._params['conv1_activation'])
-        conv2_activation = parse_activation(self._params['conv2_activation'])
         # [B, conv1_channels, NU/2, Lu/4, Lr/4]
-        Q = self.pool1(conv1_activation(self.conv1(Q)))
+        output = self.pool1(self.cons_pad(self.conv1_activation(self.conv1(output))))
         # [B, conv2_channels, 1, 1, 1]
-        Q = self.pool2(conv2_activation(self.conv2(Q)))
+        output = self.pool2(self.conv2_activation(self.conv2(output)))
         # [B, conv2_channels]
-        Q = Q.view(b_size, -1)
+        output = output.view(bsz, -1)
+        output = self.dropout(output)
         # [B, fan_output]
-        out = self.mlps(Q)
+        # output = self.mlps(output)
         # [B, num_classes] or [B, 1]
-        out = self.output(out)
-        return out
+        output = self.output(output)
+        return output

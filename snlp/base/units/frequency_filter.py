@@ -45,7 +45,11 @@ class FrequencyFilter(StatefulUnit):
     def transform(self, input_: list) -> list:
         """Transform a list of tokens"""
         valid_terms = self._context[self._mode]
-        return list(filter(lambda token: token in valid_terms, input_))
+        result = list(filter(lambda token: token in valid_terms, input_))
+        ## 如果过滤之后为空，则不过滤了
+        if len(result) <= 0:
+            result = input_
+        return result
 
     @classmethod
     def _tf(cls, list_of_tokens: list) -> dict:

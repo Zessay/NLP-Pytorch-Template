@@ -12,7 +12,7 @@ import abc
 import pandas as pd
 import typing
 from pathlib import Path
-import pickle
+import dill
 from snlp.base import units
 
 
@@ -47,7 +47,7 @@ class BasePreprocessor(metaclass=abc.ABCMeta):
         data_file_path = dirpath.joinpath(self.DATA_FILENAME)
         if not dirpath.exists():
             dirpath.mkdir(parents=True)
-        pickle.dump(self, open(data_file_path, mode='wb'))
+        dill.dump(self, open(data_file_path, mode='wb'))
 
     @classmethod
     def _default_units(cls) -> list:
@@ -62,4 +62,4 @@ def load_preprocessor(dirpath: typing.Union[str, Path]) -> 'BasePreprocessor':
     """Load the fitted context"""
     dirpath = Path(dirpath)
     data_file_path = dirpath.joinpath(BasePreprocessor.DATA_FILENAME)
-    return pickle.load(open(data_file_path, mode='rb'))
+    return dill.load(open(data_file_path, mode='rb'))

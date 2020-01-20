@@ -34,6 +34,7 @@ logger = logger.getChild("-trainer")
 class Trainer:
     """
     Generic Trainer.
+    下面参数中的epoch_scheduler和step_scheduler每次只能指定一个
     """
     def __init__(
         self,
@@ -46,8 +47,11 @@ class Trainer:
         start_epoch: int = 1,
         epochs: int = 10,
         validate_interval: typing.Optional[int] = None,
-        scheduler: typing.Any = None,
+        epoch_scheduler: typing.Any = None,
+        step_scheduler: typing.Any = None,
         clip_norm: typing.Union[float, int] = None,
+        l1_reg: float = 0.0,
+        l2_reg: float = 0.0,
         patience: typing.Optional[int] = None,
         key: typing.Any = None,
         checkpoint: typing.Union[str, Path] = None,
@@ -56,8 +60,8 @@ class Trainer:
         verbose: int = 1,
         **kwargs
     ):
-
-        self._writer = writer or SummaryWriter()
+        log_dir = Path(save_dir).joinpath("runs")
+        self._writer = writer or SummaryWriter(log_dir=log_dir)
         logger.info(f" ** save tensorboard to {self._writer.get_logdir()} ** ")
 
         self._load_model(model, device)
@@ -65,8 +69,12 @@ class Trainer:
             trainloader, validloader, validate_interval
         )
         self._optimizer = optimizer
-        self._scheduler = scheduler
-        self._clip_norm = clip_norm
+        self._epoch_scheduler = epoch_scheduler   # 由于这里的scheduler是在每个epoch之后调用一次，所以在定义的时候注意设置更新的step数和epoch一致
+        self._step_scheduler = step_scheduler  # 这个是针对step的scheduler
+        self._clip_norm = clip_norm # 梯度裁剪
+        # 正则化系数
+        self._l1_reg = l1_reg
+        self._l2_reg = l2_reg
         self._criterions = self._task.losses
 
         if not key:
@@ -156,18 +164,33 @@ class Trainer:
         :param loss: Tensor. Loss of model.
 
         """
+        # 先将梯度置为0
         self._optimizer.zero_grad()
+        # 计算参数正则化的值
+        if self._l1_reg > 0.0 or self._l2_reg > 0.0:
+            l1_regularization = torch.tensor(0, dtype=torch.float, device=self._device)
+            l2_regularization = torch.tensor(0, dtype=torch.float, device=self._device)
+            for name, p in self._model.named_parameters():
+                if "bias" not in name and "embedding" not in name:
+                    if self._l1_reg > 0.0:
+                        l1_regularization += torch.norm(p, 1)
+                    if self._l2_reg > 0.0:
+                        l2_regularization += torch.norm(p, 2)
+            loss = loss + self._l1_reg * l1_regularization + self._l2_reg * l2_regularization
+
         loss.backward()
         if self._clip_norm:
             nn.utils.clip_grad_norm_(
                 self._model.parameters(), self._clip_norm
             )
         self._optimizer.step()
+        if self._step_scheduler:
+            self._step_scheduler.step()
 
 
     def _run_scheduler(self):
-        if self._scheduler:
-            self._scheduler.step()
+        if self._epoch_scheduler:
+            self._epoch_scheduler.step()
 
     def run(self):
         """
@@ -205,8 +228,8 @@ class Trainer:
                 # Run Train
                 outputs = self._model(inputs)
                 ## 计算所有的loss并相加
-                loss = torch.sum(
-                    *[c(outputs, target) for c in self._criterions]
+                loss = sum(
+                    [c(outputs, target) for c in self._criterions]
                 )
 
                 self._backward(loss)
@@ -255,8 +278,14 @@ class Trainer:
         result = dict()
         y_pred = self.predict(dataloader)
         y_true = dataloader.label
-        loss = torch.sum(
-            *[c(torch.tensor(y_pred), torch.tensor(y_true)) for c in self._criterions]
+        if isinstance(self._task, tasks.Classification):
+            y_pred_label = np.argmax(y_pred[:10], axis=-1)
+            # 记录前10个真实标签和预测标签
+            logger.info(f"The former 10 true label is {y_true[:10]}  | pred label is {y_pred_label}")
+        elif isinstance(self._task, tasks.Ranking):
+            y_true = y_true.reshape(len(y_true), 1)
+        loss = sum(
+            [c(torch.tensor(y_pred), torch.tensor(y_true)) for c in self._criterions]
         )
         self._writer.add_scalar("Loss/eval", loss.item(), self._iteration)
         try:
@@ -341,8 +370,10 @@ class Trainer:
             'optimizer': self._optimizer.state_dict(),
             'early_stopping': self._early_stopping.state_dict(),
         }
-        if self._scheduler:
-            state['scheduler'] = self._scheduler.state_dict()
+        if self._epoch_scheduler:
+            state['epoch_scheduler'] = self._epoch_scheduler.state_dict()
+        if self._step_scheduler:
+            state['step_scheduler'] = self._step_scheduler.state_dict()
         torch.save(state, checkpoint)
 
     def restore_model(self, checkpoint: typing.Union[str, Path]):
@@ -375,5 +406,7 @@ class Trainer:
         self._optimizer.load_state_dict(state['optimizer'])
         self._start_epoch = state['epoch'] + 1
         self._early_stopping.load_state_dict(state['early_stopping'])
-        if self._scheduler:
-            self._scheduler.load_state_dict(state['scheduler'])
+        if self._epoch_scheduler:
+            self._epoch_scheduler.load_state_dict(state['epoch_scheduler'])
+        if self._step_scheduler:
+            self._step_scheduler.load_state_dict(state['step_scheduler'])
