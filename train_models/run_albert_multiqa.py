@@ -36,24 +36,25 @@ from snlp.tools.common import seed_everything
 from snlp.optimizer import RAdam, AdamW
 from snlp.schedule import get_linear_schedule_with_warmup
 from snlp.trainers import Trainer
+from snlp.losses import LabelSmoothLoss
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2, 3"
 
 # 定义任务类型
 start = time.time()
-cls_task = tasks.Classification(num_classes=2, losses=[nn.CrossEntropyLoss()])
+cls_task = tasks.Classification(num_classes=2, losses=[LabelSmoothLoss()])
 cls_task.metrics = ['accuracy']
 
-fixed_length_uttr = 40
-fixed_length_resp = 40
-fixed_length_turn = 5
+fixed_length_uttr = 20
+fixed_length_resp = 20
+fixed_length_turn = 3
 
 name = 'imn'
 batch_size = 128
 seed = 2020
-lr = 1e-5
+lr = 5e-4
 epochs = 20
-l2_reg = 1e-2
+l2_reg = 1e-3
 freeze_bert = False
 
 # 目录相关
@@ -63,7 +64,8 @@ config_file = "config.json"
 data_dir = "/home/speech/data/multi_clean"
 train_file = "multi_train_multi_turns.csv"
 valid_file = "multi_val_multi_turns.csv"
-checkpoint_file = "/home/speech/projects/pycharm_projects/Pytorch_Templates/models/aimn_model799.pt"
+# checkpoint_file = "/home/speech/projects/pycharm_projects/Pytorch_Templates/models/aimn_model767.pt"
+checkpoint_file = None
 
 
 # 定义所有模型

@@ -18,7 +18,8 @@ class FocalLoss(nn.Module):
                  num_classes: int=2,
                  alpha: typing.Union[int, list]=0.5,
                  gamma: int=2,
-                 reduction: str="mean"):
+                 reduction: str="mean",
+                 ignore_index=-100):
         """
         FocalLoss损失函数：-alpha*(1-pred_i)^2 * log(pred_i)
         :param num_classes: 表示类别数量
@@ -28,6 +29,7 @@ class FocalLoss(nn.Module):
         """
         super(FocalLoss, self).__init__()
         self._reduction = reduction
+        self._ignore_index = ignore_index
         self.gamma = gamma
         if isinstance(alpha, list):
             assert len(alpha) == num_classes
@@ -54,6 +56,8 @@ class FocalLoss(nn.Module):
         y_prob = y_prob.gather(1, y_true.view(-1, 1))
         ## 获取每一个类别对应位置的对数概率
         y_logprob = y_logprob.gather(1, y_true.view(-1, 1))
+        ## 对忽略的索引进行mask
+        y_logprob.masked_fill_((y_true == self._ignore_index).unsqueeze(1), 0)
         self.alpha = self.alpha.gather(0, y_true.view(-1))
         loss = - (torch.pow((1-y_prob), self.gamma) * y_logprob)
         loss = torch.mul(self.alpha, loss.t())
@@ -69,7 +73,7 @@ class FocalLoss(nn.Module):
         return loss
 
 if __name__ == "__main__":
-    focal = FocalLoss()
+    focal = FocalLoss(ignore_index=0)
     y_pred = torch.tensor([[0.1, 0.9], [0.7, 0.3]])
-    y_true = torch.tensor([1, 1])
+    y_true = torch.tensor([1, 0])
     print(focal(y_pred, y_true))

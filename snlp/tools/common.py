@@ -350,6 +350,19 @@ def one_hot(indices: np.ndarray, num_classes: int) -> np.ndarray:
     one_hot = one_vec[indices]
     return one_hot
 
+def label_smoothing(indices: np.ndarray, num_classes: int, pos_sub: float) -> np.ndarray:
+    """对样本标签进行平滑"""
+    # 先转换成二维的One-hot形式的矩阵
+    onehot_matrix = one_hot(indices, num_classes)
+    ## 相当于对上面的矩阵所有元素取反
+    invert_matrix = np.negative(onehot_matrix) + 1
+    neg_add = round(pos_sub / (num_classes - 1), 3)
+    result = (1 - pos_sub) * onehot_matrix + neg_add * invert_matrix
+    return result
+
+
+
+
 def sort_and_couple(labels: np.ndarray, scores: np.ndarray) -> np.ndarray:
     """根据预测的概率值从大到小进行排序"""
     couple = list(zip(labels, scores))
@@ -381,6 +394,3 @@ def _filter_concrete(classes):
 def _bfs(base):
     return base.__subclasses__() + sum([
         _bfs(subclass) for subclass in base.__subclasses__()], [])
-
-
-## -----------------

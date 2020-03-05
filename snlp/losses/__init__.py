@@ -13,7 +13,8 @@ from snlp.losses.cb_focal_loss import CBFocalLoss
 from snlp.losses.focal_loss import FocalLoss
 from snlp.losses.rank_cross_entropy_loss import RankCrossEntropyLoss
 from snlp.losses.rank_hinge_loss import RankHingeLoss
+from snlp.losses.label_smoothing_loss import LabelSmoothLoss
 
 
 __all__ = ["CBFocalLoss", "FocalLoss", "RankCrossEntropyLoss",
-           "RankHingeLoss"]
+           "RankHingeLoss", "LabelSmoothLoss"]

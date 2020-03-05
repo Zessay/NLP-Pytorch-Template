@@ -220,6 +220,7 @@ class CNAlbertPreprocessorForMultiQA(BasePreprocessor):
         data[uttr_col+'_len'] = data[uttr_col].apply(lambda s: len(s.split('\t')[-1]))
         data[resp_col+'_len'] = data[resp_col].apply(len)
         if drop:
+            ## 丢弃掉长度小于指定长度的数据
             empty_id = data[data[uttr_col+'_len'] < drop_threshold].index.tolist() + data[data[resp_col+'_len'] < drop_threshold].index.tolist()
             data.drop(index=empty_id, axis=0, inplace=True)
         # 丢弃缺失值

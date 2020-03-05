@@ -10,6 +10,9 @@
 '''
 import json
 import os
+import sys
+sys.path.append(os.path.dirname(os.getcwd()))
+
 import re
 import argparse
 import random
@@ -20,6 +23,7 @@ from pathlib import Path
 import multiprocessing as mp
 from tqdm import tqdm
 import shutil
+from preprocess_data.common import PERSONAS_DATA, PROFILES_DATA
 
 log_format = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                                datefmt='%m/%d/%Y %H:%M:%S')
@@ -28,6 +32,7 @@ logger.setLevel(logging.INFO)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_format)
 logger.handlers = [console_handler]
+
 
 def seed_everything(seed=2020):
     os.environ['PYTHONASHSEED'] = str(seed)
@@ -49,11 +54,17 @@ def read_and_get_QAlist_from_json(config):
         utterance = dialogue['utterance']
         reply = dialogue['responses'][0]['reply']
 
-        uttrs = re.split(r"\[U=\d\]", utterance.replace(" ", ""))[1:]
+        uttrs = re.split(r"\[U=\d+\]", utterance.replace(" ", ""))[1:]
         if len(uttrs) <= 1:
             num += 1
 
         q = "\t".join(uttrs)
+        for key, value in PERSONAS_DATA['Persona_Data_Robot_0'].items():
+            if key != '[robot_name]' and key != '[robot_nick]':
+                q = q.replace(key, value)
+        for key, value in PROFILES_DATA['Profile_Data_User_0'].items():
+            q = q.replace(key, value)
+
         a = reply
 
         seq_num.append(f"D_{config.to_file_name}{num}")
@@ -246,7 +257,6 @@ if __name__ == "__main__":
     logger.info(f"在 {config.sample} turn 中进行采样")
     if config.sample == "random":
         # 随机采样
-
         responses = p_data['response'].values.tolist()
         length = p_data.shape[0]
         prefix = f"multi_{config.to_file_name}_neg_random"
