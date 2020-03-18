@@ -17,21 +17,23 @@ import torch.nn.functional as F
 class CBFocalLoss(nn.Module):
     """Class Balanced Focal Loss"""
     def __init__(self,
-                 class_num: dict,
+                 class_num: list,
                  beta: float=0.99,
                  gamma: float=2.0,
                  reduction: str="mean"):
         """
         初始化函数
-        :param class_num: dict类型，表示每种类别对应的样本数，从0开始
+        :param class_num: list类型，表示每种类别对应的样本数，从0开始
         :param beta: 表示有效样本数占总样本数的比例，一般选择[0.999, 0.99, 0.9]
         :param gamma: 表示平衡指数
         :param reduction: 可选`mean`和`sum`
         """
+        super(CBFocalLoss, self).__init__()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.beta = beta
         self.gamma = gamma
-        self._nums = torch.zeros(len(class_num))
-        self.sub_beta = torch.zeros(len(class_num))
+        self._nums = torch.zeros(len(class_num)).to(device)
+        self.sub_beta = torch.zeros(len(class_num)).to(device)
         for i in range(len(class_num)):
             self._nums[i] = class_num[i]
             self.sub_beta[i] = (1 - self.beta) / (1 - math.pow(self.beta, class_num[i]))

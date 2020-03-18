@@ -338,7 +338,7 @@ def flatten_list(input_: list) -> list:
     """将多层嵌套的列表结构展开"""
     output = []
     for l in input_:
-        if (isinstance(l, list)) or (isinstance(l, np.ndarray)):
+        if (isinstance(l, list)) or (isinstance(l, np.ndarray) or isinstance(l, tuple)):
             output.extend(flatten_list(l))
         else:
             output.append(l)

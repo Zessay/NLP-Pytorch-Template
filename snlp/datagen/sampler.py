@@ -12,7 +12,10 @@
               得到的每一个list合并，直到满足batch_size的大小。
 '''
 import math
+import numpy as np
+from collections import defaultdict
 from torch.utils.data import Sampler, Dataset
+from snlp.tools.common import flatten_list
 
 class SequentialSampler(Sampler):
     """
@@ -85,3 +88,41 @@ class BatchSampler(Sampler):
     def __len__(self):
         """Get the total number of batch"""
         return math.ceil(len(self._sampler) / self._batch_size)
+
+# ----------------------------------------------------------------
+class UpSampler(Sampler):
+    """上采样"""
+    def __init__(self, dataset: Dataset):
+        self._dataset = dataset
+        self._num_samples = len(dataset)
+        self._sample_dict = self._up_sample()
+        self._new_indexes = self._gen_new_indexes()
+
+    def _up_sample(self):
+        sample_dict = defaultdict(list)
+        for i in range(self._num_samples):
+            # 获取当前元素对应的标签
+            label = self._dataset[i][-1].item()
+            sample_dict[label].append(i)
+        # 计算样本数最多的类别对应的样本数
+        max_num = max([len(samples) for samples in sample_dict.values()])
+        # 对每个类别上采样
+        for key, value in sample_dict.items():
+            cur_num = len(value)
+            sample_indexes = np.random.choice(value, size=max_num-cur_num)
+            ## 随机打乱
+            indexes = np.random.permutation(list(value) + list(sample_indexes))
+            sample_dict[key] = indexes
+        return sample_dict
+
+    def _gen_new_indexes(self):
+        indexes = self._sample_dict.values()
+        new_indexes = flatten_list(list(zip(*indexes)))
+        return new_indexes
+
+    def __iter__(self):
+        return iter(self._new_indexes)
+
+    def __len__(self):
+        return len(self._new_indexes)
+
