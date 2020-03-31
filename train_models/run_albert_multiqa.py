@@ -38,34 +38,50 @@ from snlp.schedule import get_linear_schedule_with_warmup
 from snlp.trainers import Trainer
 from snlp.losses import LabelSmoothLoss
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2, 3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3,4"
 
 # 定义任务类型
 start = time.time()
-cls_task = tasks.Classification(num_classes=2, losses=[LabelSmoothLoss()])
+cls_task = tasks.Classification(num_classes=2, losses=[nn.CrossEntropyLoss(), LabelSmoothLoss(label_smoothing=0.2)])
 cls_task.metrics = ['accuracy']
 
-fixed_length_uttr = 20
+fixed_length_uttr = 40
+# fixed_length_uttr = 20
 fixed_length_resp = 20
 fixed_length_turn = 3
 
 name = 'imn'
-batch_size = 128
+batch_size = 64
 seed = 2020
 lr = 5e-4
-epochs = 20
-l2_reg = 1e-3
+bert_lr = 2e-5
+# lr = 5e-5
+# bert_lr = 1e-5
+epochs = 15
+# l2_reg = 1e-3
+l2_reg = 0.0
 freeze_bert = False
+# weight_decay = 1e-4
+weight_decay = 0.0
 
 # 目录相关
 albert_path = "/home/speech/models/albert_tiny_pytorch_489k"
 vocab_file = "vocab.txt"
 config_file = "config.json"
-data_dir = "/home/speech/data/multi_clean"
-train_file = "multi_train_multi_turns.csv"
-valid_file = "multi_val_multi_turns.csv"
-# checkpoint_file = "/home/speech/projects/pycharm_projects/Pytorch_Templates/models/aimn_model767.pt"
+# data_dir = "/home/speech/data/multi_clean"
+# train_file = "multi_train_multi_turns.csv"
+# valid_file = "multi_val_multi_turns.csv"
+data_dir = "/home/speech/data/multi_0324"
+train_file = "multi_turn_train.csv"
+valid_file = "multi_turn_val.csv"
+# train_file = "multi_persona_train.csv"
+# valid_file = "multi_persona_val.csv"
+# checkpoint_file = "/home/speech/models/multi_qa/aimn_uur_7737.pt"
 checkpoint_file = None
+data_type = "uur"  # 表示utterance部分是将Utterance和Response进行拼接的，uru或者uur
+add_specical_tokens = True  # 表示Bert分词时是否添加[CLS]和[SEP]两个占位符
+
+
 
 
 # 定义所有模型
@@ -83,7 +99,8 @@ def preprocess_train_and_val(train_file, valid_file):
     valid_data.dropna(axis=0, subset=[constants.UTTRS, constants.RESP], inplace=True)
     preprocessor = CNAlbertPreprocessorForMultiQA(Path(albert_path) / vocab_file,
                                                   uttr_len=fixed_length_uttr,
-                                                  resp_len=fixed_length_resp)
+                                                  resp_len=fixed_length_resp,
+                                                  add_special_tokens=add_specical_tokens)
     logger.info(f"训练集数据量为：{train_data.shape[0]} | 验证集数据量为：{valid_data.shape[0]}")
 
     logger.info("使用Preprocessor处理数据")
@@ -97,8 +114,6 @@ def preprocess_train_and_val(train_file, valid_file):
     train_data = train_data[use_cols]
     valid_data = valid_data[use_cols]
 
-    logger.info(f"处理之后——训练集数据量为：{train_data.shape[0]} | 验证集数据量为：{valid_data.shape[0]}")
-
     label_type = int
     train_data[constants.LABEL] = train_data[constants.LABEL].astype(label_type)
     valid_data[constants.LABEL] = valid_data[constants.LABEL].astype(label_type)
@@ -109,7 +124,7 @@ def get_dataloader(train_data, valid_data):
     train_dataset = PairDataset(train_data, num_neg=0)
     valid_dataset = PairDataset(valid_data, num_neg=0)
     padding = MultiQAPadding(fixed_length_uttr=fixed_length_uttr, fixed_length_resp=fixed_length_resp,
-                             fixed_length_turn=fixed_length_turn)
+                             fixed_length_turn=fixed_length_turn, data_type=data_type)
 
     train_dataloader = DictDataLoader(train_dataset, batch_size=batch_size,
                                       turns=fixed_length_turn,
@@ -136,7 +151,7 @@ if __name__ == "__main__":
     seed_everything(seed)
 
     logger.info(f"使用参数为 —— \n L2_REG: {l2_reg} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr} | "
-                f"Uttr_Len: {fixed_length_uttr} | Resp_Len: {fixed_length_resp} | Turn: {fixed_length_turn}")
+                f"Uttr_Len: {fixed_length_uttr} | Resp_Len: {fixed_length_resp} | Turn: {fixed_length_turn} | Type: {data_type.upper()}")
     train_processed_file = train_file[0:-4] + "_albert_processed.csv"
     valid_processed_file = valid_file[0:-4] + "_albert_processed.csv"
     try:
@@ -160,6 +175,7 @@ if __name__ == "__main__":
         valid_data.to_csv(Path(data_dir) / valid_processed_file, index=False)
         logger.info("保存了预处理好的数据")
 
+    logger.info(f"处理之后——训练集数据量为：{train_data.shape[0]} | 验证集数据量为：{valid_data.shape[0]}")
     train_dataloader, valid_dataloader = get_dataloader(train_data, valid_data)
 
     # ------------------------------------
@@ -170,7 +186,7 @@ if __name__ == "__main__":
     config = AlbertConfig.from_pretrained(Path(albert_path) / config_file)
     model = MODELS[name](uttr_len=fixed_length_uttr, resp_len=fixed_length_resp,
                          turns=fixed_length_turn, config=config, model_path=albert_path,
-                         freeze_bert=freeze_bert)
+                         freeze_bert=freeze_bert, data_type=data_type)
     params = model.get_default_params()
     params['task'] = cls_task
     model.params = params
@@ -178,9 +194,41 @@ if __name__ == "__main__":
     model = model.to(device)
     model = model.float()
 
-    num_training_steps = (train_data.shape[0] // batch_size + 1) * epochs
+    # albert_params = list(model.albert.named_parameters())
+    # print(albert_params)
+    ## 使用分层学习率
+    no_decay = ['bias', 'LayerNorm.weight']
 
-    optimizer = RAdam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    if freeze_bert:
+        params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+        optimizer_grouped_params = [
+            {'params': [p for n, p in params if not any(nd in n for nd in no_decay)],
+             'weight_decay': weight_decay, 'lr': lr},
+            {'params': [p for n, p in params if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': lr}
+        ]
+    else:
+        bert_params = list(model.albert.named_parameters())
+        bert_names = [n for n, p in bert_params]
+        other_params = [(n, p) for n, p in model.named_parameters() if "albert" not in n]
+        other_names = [n for n, p in other_params]
+
+        optimizer_grouped_params = [
+            {'params': [p for n, p in bert_params if not any(nd in n for nd in no_decay)],
+             'weight_decay': weight_decay, 'lr': bert_lr},
+            {'params': [p for n, p in bert_params if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': bert_lr},
+            {'params': [p for n, p in other_params if not any(nd in n for nd in no_decay)],
+             'weight_decay': weight_decay, 'lr': lr},
+            {'params': [p for n, p in other_params if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': lr}
+        ]
+
+    num_training_steps = (train_data.shape[0] // batch_size + 1) * epochs
+    # num_training_steps = 100000
+
+    # optimizer = RAdam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    optimizer = RAdam(params=optimizer_grouped_params)
     step_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_training_steps // epochs,
                                                      num_training_steps=num_training_steps)
 
@@ -192,7 +240,7 @@ if __name__ == "__main__":
         epochs=epochs,
         l2_reg=l2_reg,
         step_scheduler=step_scheduler,
-        save_dir=f"albert_{name}",
+        save_dir=f"albert_{name}_{data_type}",
         checkpoint=checkpoint_file
     )
 

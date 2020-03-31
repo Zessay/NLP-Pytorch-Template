@@ -16,9 +16,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from torch.utils.data.distributed import DistributedSampler
 
 # from albert_pytorch.model.modeling_albert import AlbertConfig, AlbertForSequenceClassification
-from albert_pytorch.model.modeling_albert_bright import AlbertConfig, \
-    AlbertForSequenceClassification, \
-    AlbertCombinationForSequenceCLS, AlbertForSequenceClassificationLS # chinese version
+from albert_pytorch.model.modeling_albert_bright import AlbertConfig, AlbertForSequenceClassificationPair
 from albert_pytorch.model import tokenization_albert
 from albert_pytorch.model.file_utils import WEIGHTS_NAME
 
@@ -36,9 +34,9 @@ from snlp.optimizer import AdamW
 from snlp.schedule import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from snlp.datagen.sampler import UpSampler
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 # model_class = AlbertCombinationForSequenceCLS
-model_class = AlbertForSequenceClassificationLS
+model_class = AlbertForSequenceClassificationPair
 # model_class = AlbertForSequenceClassification
 
 def train(args, train_dataset, model, tokenizer):
@@ -59,25 +57,25 @@ def train(args, train_dataset, model, tokenizer):
     args.warmup_steps = int(num_training_steps * args.warmup_proportion)
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
-    bert_param_optimizer = list(model.bert.named_parameters())
-    linear_param_optimizer = list(model.classifier.named_parameters())
-
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
-         'weight_decay': args.weight_decay, 'lr': 5e-5},
-        {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
-         'weight_decay': 0.0, 'lr': 5e-5},
-        {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
-         'weight_decay': args.weight_decay, 'lr': args.learning_rate},
-        {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
-         'weight_decay': 0.0, 'lr': args.learning_rate}
-    ]
+    # bert_param_optimizer = list(model.bert.named_parameters())
+    # linear_param_optimizer = list(model.classifier.named_parameters())
     #
     # optimizer_grouped_parameters = [
-    #     {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-    #      'weight_decay': args.weight_decay},
-    #     {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    #     {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
+    #      'weight_decay': args.weight_decay, 'lr': 5e-5},
+    #     {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
+    #      'weight_decay': 0.0, 'lr': 5e-5},
+    #     {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
+    #      'weight_decay': args.weight_decay, 'lr': args.learning_rate},
+    #     {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
+    #      'weight_decay': 0.0, 'lr': args.learning_rate}
     # ]
+    #
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+         'weight_decay': args.weight_decay},
+        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
     # optimizer = Lamb(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     optimizer = AdamW(params=optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     # optimizer = Lookahead(optimizer, device=args.device)
@@ -123,6 +121,7 @@ def train(args, train_dataset, model, tokenizer):
                       'attention_mask': batch[1],
                       'labels': batch[3]}
             inputs['token_type_ids'] = batch[2]
+            inputs['seq_lens'] = batch[4]
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
@@ -201,9 +200,10 @@ def evaluate(args, model, tokenizer, prefix=""):
                           'attention_mask': batch[1],
                           'labels': batch[3]}
                 inputs['token_type_ids'] = batch[2]
+                inputs['seq_lens'] = batch[4]
                 outputs = model(**inputs)
                 tmp_eval_loss, logits = outputs[:2]
-                eval_loss += tmp_eval_loss.mean().item()
+                eval_loss += tmp_eval_loss.item()
             nb_eval_steps += 1
             if preds is None:
                 preds = logits.detach().cpu().numpy()
@@ -217,7 +217,11 @@ def evaluate(args, model, tokenizer, prefix=""):
             torch.cuda.empty_cache()
         eval_loss = eval_loss / nb_eval_steps
         if args.output_mode == "classification":
-            preds = np.argmax(preds, axis=1)
+            ## 如果预测的是概率，则取第二列
+            if len(preds.shape) > 1:
+                preds = np.argmax(preds, axis=1)
+            else:
+                preds = (preds > 0.5).astype(np.int)
         elif args.output_mode == "regression":
             preds = np.squeeze(preds)
 
@@ -267,7 +271,9 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
                                                 tokenizer,
                                                 label_list=label_list,
                                                 max_seq_length=args.max_seq_length,
-                                                output_mode = output_mode)
+                                                output_mode = output_mode,
+                                                add_cls_to_pair=True,
+                                                output_length=True)
         if args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
@@ -355,6 +361,20 @@ def main():
                         help="Overwrite the content of the output directory")
     parser.add_argument('--overwrite_cache', action='store_true',
                         help="Overwrite the cached training and evaluation sets")
+
+    parser.add_argument('--loss_type', type=str, default="ce",
+                        help="The loss type, CrossEntropy default.")
+    parser.add_argument('--ls_epsilon', type=float, default=0.1,
+                        help="The factor of Label Smoothing loss.")
+    parser.add_argument('--fusion_type', type=str, default="pair",
+                        help="The fusion type of text left and text right.")
+    parser.add_argument('--abs', action='store_true',
+                        help="When fusion=cross, this param is work.")
+    parser.add_argument('--output_dropout_prob', type=float, default=0.1,
+                        help="The dropout rate of the output layer.")
+    parser.add_argument('--out_activation', type=str, default="relu",
+                        help="The activation function of the output layer.")
+
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
     parser.add_argument('--save_eval',action='store_true',
@@ -423,7 +443,13 @@ def main():
     args.model_type = args.model_type.lower()
     config = AlbertConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           num_labels=num_labels,
-                                          finetuning_task=args.task_name)
+                                          finetuning_task=args.task_name,
+                                          loss_type=args.loss_type,
+                                          ls_epsilon=args.ls_epsilon,
+                                          fusion_type=args.fusion_type,
+                                          abs=args.abs,
+                                          output_dropout_prob=args.output_dropout_prob,
+                                          out_activation=args.out_activation)
     tokenizer = tokenization_albert.FullTokenizer(vocab_file=args.vocab_file, do_lower_case=args.do_lower_case,
                                                  spm_model_file=args.spm_model_file)
     model = model_class.from_pretrained(args.model_name_or_path,

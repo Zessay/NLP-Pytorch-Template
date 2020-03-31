@@ -38,6 +38,7 @@ NGRAM_RIGHT = 'ngram_right'
 ######## -------- 用于多轮QA的字段名 ----------
 UTTRS = 'utterances'
 RESP = 'response'
+UR_POS = 'ur_pos'
 LAST = 'last'  # 表示最近的utterance
 UTTRS_LEN = 'utterances_len'
 RESP_LEN = 'response_len'

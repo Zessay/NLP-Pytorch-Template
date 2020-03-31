@@ -62,7 +62,7 @@ class FocalLoss(nn.Module):
         loss = - (torch.pow((1-y_prob), self.gamma) * y_logprob)
         loss = torch.mul(self.alpha, loss.t())
 
-        if self._reduction is None:
+        if self._reduction == "none":
             loss = loss
         elif self._reduction == "mean":
             loss = loss.mean()

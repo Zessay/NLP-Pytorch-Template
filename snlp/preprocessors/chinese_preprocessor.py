@@ -188,13 +188,15 @@ class CNPreprocessorForMultiQA(CNPreprocessor):
         logger.info("** transform结束 **")
         return data
 
+# -------------------------------------------------------------------------------------------------
 
 class CNAlbertPreprocessorForMultiQA(BasePreprocessor):
-    def __init__(self, vocab_file, uttr_len, resp_len):
+    def __init__(self, vocab_file, uttr_len, resp_len, add_special_tokens=True):
         ## 使用encode_plus会截断但是不会填充
         self.tokenizer = tokenization_bert.BertTokenizer(vocab_file=vocab_file).encode_plus
         self.uttr_len = uttr_len
         self.resp_len = resp_len
+        self.add_special_tokens = add_special_tokens
 
     def fit(self):
         pass
@@ -210,7 +212,7 @@ class CNAlbertPreprocessorForMultiQA(BasePreprocessor):
         def split_and_cut(uttrs):
             uttrs_list = uttrs.split("\t")
             for i in range(len(uttrs_list)):
-                uttrs_list[i] = self.tokenizer(uttrs_list[i], add_special_tokens=True,
+                uttrs_list[i] = self.tokenizer(uttrs_list[i], add_special_tokens=self.add_special_tokens,
                                                            max_length=self.uttr_len)['input_ids']
             return uttrs_list
 
@@ -230,7 +232,7 @@ class CNAlbertPreprocessorForMultiQA(BasePreprocessor):
         # 使用Albert的结果进行分词
         data[uttr_col] = data[uttr_col].apply(split_and_cut)
         data[resp_col] = data[resp_col].apply(lambda s: self.tokenizer(s,
-                                                                       add_special_tokens=True,
+                                                                       add_special_tokens=self.add_special_tokens,
                                                                        max_length=self.resp_len)['input_ids'])
 
         # 长度应该是单词序列的长度，这有可能是词的，也有可能是字的

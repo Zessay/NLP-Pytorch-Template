@@ -27,7 +27,7 @@ class DictDataLoader(DataLoader):
                  dataset: Dataset,
                  char: bool=False,  # 表示是否返回分字的结果
                  batch_size: int = 64,
-                 turns: int=5,  # 是否需要返回turns这个索引
+                 turns: int=3,  # 是否需要返回turns这个索引
                  stage='train',
                  device: typing.Union[torch.device, int, list, None] = None,
                  shuffle: bool = False,

@@ -1283,8 +1283,150 @@ class AlbertForSequenceClassificationLS(AlbertPreTrainedModel):
 
         if labels is not None:
             ## KL散度，输入logits是对数概率
-            loss_fct = LabelSmoothLoss(label_smoothing=0.2, reduction="batchmean")
+            loss_fct = LabelSmoothLoss(label_smoothing=self.epsilon, reduction="batchmean")
             loss = loss_fct(logits.view(-1, self.num_labels), labels)
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), logits, (hidden_states), (attentions)
+
+
+# ------------------------ 针对pair的分类函数 ---------------------------
+
+@add_start_docstrings("""Bert Model transformer with a sequence classification/regression head on top (a linear layer on top of
+    the pooled output) e.g. for GLUE tasks. """,
+                      BERT_START_DOCSTRING, BERT_INPUTS_DOCSTRING)
+class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
+    """
+    Albert for Pair Classification.
+    """
+
+    def __init__(self, config):
+        super(AlbertForSequenceClassificationPair, self).__init__(config)
+        self.num_labels = config.num_labels
+        self.loss_type = config.loss_type  # 表示损失函数的类型
+        self.ls_epsilon = config.ls_epsilon  # 表示标签平滑时使用的平滑系数
+        self.fusion_type = config.fusion_type  # 表示融合的类型
+        self.abs = config.abs   # 当fusion为cross的时候，是否要对sub添加绝对值
+
+        self.class_num = [1] * self.num_labels  # 用作CBloss的参数
+
+        self.bert = AlbertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        if self.fusion_type == "origin":
+            hidden_size = config.hidden_size
+        elif self.fusion_type == "pair":
+            hidden_size = config.hidden_size * 2
+        elif self.fusion_type == "addend":
+            hidden_size = config.hidden_size * 3
+        elif self.fusion_type == "cross":
+            hidden_size = config.hidden_size * 4
+        else:
+            raise KeyError(f"can't recognize {self.fusion_type}.")
+
+
+        if self.loss_type == "cosine":
+            self.dense = nn.Linear(config.hidden_size, 128)
+        else:
+            self.dense = nn.Linear(hidden_size, config.hidden_size)
+
+        if config.out_activation == "tanh":
+            self.activation = nn.Tanh()
+        elif config.out_activation == "relu":
+            self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(config.output_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
+
+        self.init_weights()
+
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None,
+                position_ids=None, head_mask=None, labels=None, seq_lens=None):
+
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            position_ids=position_ids,
+                            head_mask=head_mask)
+
+        # pooled_output = outputs[1]
+        ## 获取所有序列的输出 [B, L, embed_size]
+        sequence_output = outputs[0]
+
+
+        # 获取第一句[CLS]的输出，[B, embd_size]
+        dense_input = sequence_output[:, 0, :]
+        # 获取第二句的[CLS]或者首个字符的输出
+        ## 首先计算对应的索引，[B, embed_size]
+
+        if self.loss_type == "cosine":
+            first_sent = dense_input
+            ss_token = seq_lens[:, 0].unsqueeze(1).unsqueeze(2).repeat(1,
+                                                                       sequence_output.size(1),
+                                                                       sequence_output.size(2))
+            ## [B, embed_size]
+            second_sent = torch.gather(sequence_output, dim=1, index=ss_token)[:, 0, :]
+        else:
+            if self.fusion_type != "origin":
+
+                ss_token = seq_lens[:, 0].unsqueeze(1).unsqueeze(2).repeat(1,
+                                                                           sequence_output.size(1),
+                                                                           sequence_output.size(2))
+                ## [B, embed_size]
+                second_sent = torch.gather(sequence_output, dim=1, index=ss_token)[:, 0, :]
+                ## [B, 2*embed_size]
+                dense_input = torch.cat([dense_input, second_sent], dim=-1)
+
+                if self.fusion_type == "addend":
+                    # 获取第二个字符结束位置的输出
+                    se_token = seq_lens[:, 1].unsqueeze(1).unsqueeze(2).repeat(1,
+                                                                               sequence_output.size(1),
+                                                                               sequence_output.size(2))
+                    second_end = torch.gather(sequence_output, dim=1, index=se_token)[:, 0, :]
+                    ## [B, 3*embed_size]
+                    dense_input = torch.cat([dense_input, second_end], dim=-1)
+                if self.fusion_type == "cross":
+                    first_sent = sequence_output[:, 0, :]
+                    sub = first_sent - second_sent
+                    if self.abs:
+                        sub = torch.abs(sub)
+                    dot = first_sent * second_sent
+                    dense_input = torch.cat([dense_input, sub], dim=-1)
+                    dense_input = torch.cat([dense_input, dot], dim=-1)
+
+        if self.loss_type == "cosine":
+            ## 使用relu激活函数保证最终的相似度在0到1之间
+            first_sent = self.dense(first_sent)
+            second_sent = self.dense(second_sent)
+            logits = nn.CosineSimilarity(eps=1e-5)(first_sent, second_sent)
+        else:
+            # logits = self.classifier(self.dropout(self.activation(self.dense(dense_input))))
+            logits = self.classifier(self.activation(self.dense(dense_input)))
+
+        # pooled_output = self.dropout(pooled_output)
+        # logits = self.classifier(pooled_output)
+
+        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
+
+        if labels is not None:
+            if self.num_labels == 1:
+                #  We are doing regression
+                loss_fct = MSELoss()
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
+                # loss_fct = CBFocalLoss(class_num=[8620, 190, 422, 103, 335])
+                if self.loss_type == "cosine":
+                    loss_fct = nn.CosineEmbeddingLoss(margin=0, reduction='mean')
+                    new_labels = labels.masked_fill((labels == 0), -1)
+                    loss = loss_fct(first_sent, second_sent, new_labels)
+                else:
+                    loss_fct = CrossEntropyLoss()
+                    if self.loss_type == "ls":
+                        loss_fct = LabelSmoothLoss(label_smoothing=self.ls_epsilon, reduction='mean')
+                    elif self.loss_type == "focal":
+                        loss_fct = FocalLoss(num_classes=self.num_labels, reduction='mean')
+                    elif self.loss_type == "cb":
+                        loss_fct = CBFocalLoss(class_num=self.class_num, reduction='mean')
+                    loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, (hidden_states), (attentions)

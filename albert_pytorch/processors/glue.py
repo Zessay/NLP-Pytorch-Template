@@ -16,39 +16,26 @@ def collate_fn(batch):
     Returns a padded tensor of sequences sorted from longest to shortest,
     """
     all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels = map(torch.stack, zip(*batch))
-    max_len = max(all_lens).item()
+    if len(all_lens.size()) > 1:
+        max_len = max(all_lens[:, 1]).item() + 1
+    else:
+        max_len = max(all_lens).item()
     all_input_ids = all_input_ids[:, :max_len]
     all_attention_mask = all_attention_mask[:, :max_len]
     all_token_type_ids = all_token_type_ids[:, :max_len]
-    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels
-
+    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels, all_lens
 
 def glue_convert_examples_to_features(examples, tokenizer,
                                       max_seq_length=512,
                                       task=None,
                                       label_list=None,
-                                      output_mode=None):
+                                      output_mode=None,
+                                      add_cls_to_pair=False,
+                                      output_length=False):
     """
-    Loads a data file into a list of ``InputFeatures``
-    Args:
-        examples: List of ``InputExamples`` or ``tf.data.Dataset`` containing the examples.
-        tokenizer: Instance of a tokenizer that will tokenize the examples
-        max_length: Maximum example length
-        task: GLUE task
-        label_list: List of labels. Can be obtained from the processor using the ``processor.get_labels()`` method
-        output_mode: String indicating the output mode. Either ``regression`` or ``classification``
-        pad_on_left: If set to ``True``, the examples will be padded on the left rather than on the right (default)
-        pad_token: Padding token
-        pad_token_segment_id: The segment ID for the padding token (It is usually 0, but can vary such as for XLNet where it is 4)
-        mask_padding_with_zero: If set to ``True``, the attention mask will be filled by ``1`` for actual values
-            and by ``0`` for padded values. If set to ``False``, inverts it (``1`` for padded values, ``0`` for
-            actual values)
-
-    Returns:
-        If the ``examples`` input is a ``tf.data.Dataset``, will return a ``tf.data.Dataset``
-        containing the task-specific features. If the input is a list of ``InputExamples``, will return
-        a list of task-specific ``InputFeatures`` which can be fed to the model.
-
+    :param add_cls_to_pair: 表示是否向pair的第二个sentence添加[CLS]
+    :param output_length: 表示是否输出第一段和第二段的长度
+    :return:
     """
     if task is not None:
         processor = glue_processors[task]()
@@ -60,29 +47,31 @@ def glue_convert_examples_to_features(examples, tokenizer,
             logger.info("Using output mode %s for task %s" % (output_mode, task))
 
     label_map = {label: i for i, label in enumerate(label_list)}
-
+    # 用来保存所有的样例
     features = []
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d" % (ex_index))
-
         if ex_index == 0:
             logger.info(f"数据类型为： {example.text_a}")
         tokens_a = tokenizer.tokenize(example.text_a)
+        tokens_b = None
 
-        tokens_b =None
         if example.text_b:
             tokens_b = tokenizer.tokenize(example.text_b)
         if tokens_b:
-            # Modifies `tokens_a` and `tokens_b` in place so that the total
-            # length is less than the specified length.
-            # Account for [CLS], [SEP], [SEP] with "- 3"
-            _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+            ## 表示是否需要向第二段添加[CLS]这个token
+            if add_cls_to_pair:
+                sub_len = 4
+            else:
+                sub_len = 3
+            _truncate_seq_pair(tokens_a, tokens_b, max_seq_length-sub_len)
         else:
-            # Account for [CLS] and [SEP] with "- 2"
             if len(tokens_a) > max_seq_length - 2:
-                tokens_a = tokens_a[0:(max_seq_length - 2)]
+                tokens_a = tokens_a[0:(max_seq_length-2)]
 
+        ## 添加所有的tokens
+        lens = None  ## 用来保存前一个和后一个文本的长度
         tokens = []
         token_type_ids = []
         tokens.append("[CLS]")
@@ -92,28 +81,34 @@ def glue_convert_examples_to_features(examples, tokenizer,
             token_type_ids.append(0)
         tokens.append("[SEP]")
         token_type_ids.append(0)
+        if output_length:
+            lens = [len(tokens)]
 
         if tokens_b:
+            if add_cls_to_pair:
+                tokens.append("[CLS]")
+                token_type_ids.append(1)
             for token in tokens_b:
                 tokens.append(token)
                 token_type_ids.append(1)
             tokens.append("[SEP]")
             token_type_ids.append(1)
-
+            if output_length:
+                lens.append(len(tokens)-1)
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
-        # The mask has 1 for real tokens and 0 for padding tokens. Only real
-        # tokens are attended to.
+        ## 添加mask向量
         attention_mask = [1] * len(input_ids)
         input_len = len(input_ids)
 
-        # Zero-pad up to the sequence length.
+        # 添加padding
         while len(input_ids) < max_seq_length:
             input_ids.append(0)
             attention_mask.append(0)
             token_type_ids.append(0)
 
         assert len(input_ids) == max_seq_length
+        assert len(attention_mask) == max_seq_length
         assert len(attention_mask) == max_seq_length
         assert len(token_type_ids) == max_seq_length
         if output_mode == "classification":
@@ -122,6 +117,7 @@ def glue_convert_examples_to_features(examples, tokenizer,
             label_id = float(example.label)
         else:
             raise KeyError(output_mode)
+
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
@@ -131,13 +127,133 @@ def glue_convert_examples_to_features(examples, tokenizer,
             logger.info("label: %s (id = %d)" % (example.label, label_id))
             logger.info("input length: %d" % (input_len))
 
+
+        length = lens or input_len
         features.append(
             InputFeatures(input_ids=input_ids,
                           attention_mask=attention_mask,
                           token_type_ids=token_type_ids,
                           label=label_id,
-                          input_len=input_len))
+                          input_len=length))
     return features
+
+
+
+# def glue_convert_examples_to_features(examples, tokenizer,
+#                                       max_seq_length=512,
+#                                       task=None,
+#                                       label_list=None,
+#                                       output_mode=None):
+#     """
+#     Loads a data file into a list of ``InputFeatures``
+#     Args:
+#         examples: List of ``InputExamples`` or ``tf.data.Dataset`` containing the examples.
+#         tokenizer: Instance of a tokenizer that will tokenize the examples
+#         max_length: Maximum example length
+#         task: GLUE task
+#         label_list: List of labels. Can be obtained from the processor using the ``processor.get_labels()`` method
+#         output_mode: String indicating the output mode. Either ``regression`` or ``classification``
+#         pad_on_left: If set to ``True``, the examples will be padded on the left rather than on the right (default)
+#         pad_token: Padding token
+#         pad_token_segment_id: The segment ID for the padding token (It is usually 0, but can vary such as for XLNet where it is 4)
+#         mask_padding_with_zero: If set to ``True``, the attention mask will be filled by ``1`` for actual values
+#             and by ``0`` for padded values. If set to ``False``, inverts it (``1`` for padded values, ``0`` for
+#             actual values)
+#
+#     Returns:
+#         If the ``examples`` input is a ``tf.data.Dataset``, will return a ``tf.data.Dataset``
+#         containing the task-specific features. If the input is a list of ``InputExamples``, will return
+#         a list of task-specific ``InputFeatures`` which can be fed to the model.
+#
+#     """
+#     if task is not None:
+#         processor = glue_processors[task]()
+#         if label_list is None:
+#             label_list = processor.get_labels()
+#             logger.info("Using label list %s for task %s" % (label_list, task))
+#         if output_mode is None:
+#             output_mode = glue_output_modes[task]
+#             logger.info("Using output mode %s for task %s" % (output_mode, task))
+#
+#     label_map = {label: i for i, label in enumerate(label_list)}
+#
+#     features = []
+#     for (ex_index, example) in enumerate(examples):
+#         if ex_index % 10000 == 0:
+#             logger.info("Writing example %d" % (ex_index))
+#
+#         if ex_index == 0:
+#             logger.info(f"数据类型为： {example.text_a}")
+#         tokens_a = tokenizer.tokenize(example.text_a)
+#
+#         tokens_b =None
+#         if example.text_b:
+#             tokens_b = tokenizer.tokenize(example.text_b)
+#         if tokens_b:
+#             # Modifies `tokens_a` and `tokens_b` in place so that the total
+#             # length is less than the specified length.
+#             # Account for [CLS], [SEP], [SEP] with "- 3"
+#             _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+#         else:
+#             # Account for [CLS] and [SEP] with "- 2"
+#             if len(tokens_a) > max_seq_length - 2:
+#                 tokens_a = tokens_a[0:(max_seq_length - 2)]
+#
+#         tokens = []
+#         token_type_ids = []
+#         tokens.append("[CLS]")
+#         token_type_ids.append(0)
+#         for token in tokens_a:
+#             tokens.append(token)
+#             token_type_ids.append(0)
+#         tokens.append("[SEP]")
+#         token_type_ids.append(0)
+#
+#         if tokens_b:
+#             for token in tokens_b:
+#                 tokens.append(token)
+#                 token_type_ids.append(1)
+#             tokens.append("[SEP]")
+#             token_type_ids.append(1)
+#
+#         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+#
+#         # The mask has 1 for real tokens and 0 for padding tokens. Only real
+#         # tokens are attended to.
+#         attention_mask = [1] * len(input_ids)
+#         input_len = len(input_ids)
+#
+#         # Zero-pad up to the sequence length.
+#         while len(input_ids) < max_seq_length:
+#             input_ids.append(0)
+#             attention_mask.append(0)
+#             token_type_ids.append(0)
+#
+#         assert len(input_ids) == max_seq_length
+#         assert len(attention_mask) == max_seq_length
+#         assert len(token_type_ids) == max_seq_length
+#         if output_mode == "classification":
+#             label_id = label_map[example.label]
+#         elif output_mode == "regression":
+#             label_id = float(example.label)
+#         else:
+#             raise KeyError(output_mode)
+#         if ex_index < 5:
+#             logger.info("*** Example ***")
+#             logger.info("guid: %s" % (example.guid))
+#             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+#             logger.info("attention_mask: %s" % " ".join([str(x) for x in attention_mask]))
+#             logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
+#             logger.info("label: %s (id = %d)" % (example.label, label_id))
+#             logger.info("input length: %d" % (input_len))
+#
+#         features.append(
+#             InputFeatures(input_ids=input_ids,
+#                           attention_mask=attention_mask,
+#                           token_type_ids=token_type_ids,
+#                           label=label_id,
+#                           input_len=input_len))
+#     return features
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""
@@ -467,10 +583,10 @@ class SimProcessor(DataProcessor):
     def _create_examples(self, data, set_type):
         """Creates examples for the training and dev sets."""
         examples = []
-        for i, row in data.iterrows():
-            guid = "%s-%s" % (set_type, i+1)
+        for row in data.itertuples(index=True):
+            guid = "%s-%s" % (set_type, row.Index+1)
             text_a = row.text_left
-            if i == 0:
+            if row.Index == 0:
                 logger.info(f"数据为：{text_a}")
             text_b = row.text_right
             label = row.label
@@ -486,9 +602,9 @@ class SimProcessor(DataProcessor):
         return data
 
     def get_train_examples(self, data_dir):
-        logger.info("Logging at {}".format(Path(data_dir) / "train_0211.csv"))
+        logger.info("Logging at {}".format(Path(data_dir) / "train_0306.csv"))
         return self._create_examples(
-            self._read_csv(Path(data_dir)/"train_0211.csv"), "train")
+            self._read_csv(Path(data_dir)/"train_0306.csv"), "train")
 
     def get_dev_examples(self, data_dir):
         return self._create_examples(
@@ -502,14 +618,14 @@ class QAProcessor(DataProcessor):
 
     def get_train_examples(self, data_dir):
         """See base class."""
-        logger.info("Logging at {}".format(os.path.join(data_dir, 'train_0211.csv')))
+        logger.info("Logging at {}".format(os.path.join(data_dir, 'train_0326.csv')))
         return self._create_examples(
-            self._read_csv(os.path.join(data_dir, "train_0211.csv")), "train")
+            self._read_csv(os.path.join(data_dir, "train_0326.csv")), "train")
 
     def get_dev_examples(self, data_dir):
         """See base class."""
         return self._create_examples(
-            self._read_csv(os.path.join(data_dir, "dev_0211.csv")), "dev")
+            self._read_csv(os.path.join(data_dir, "dev_0326.csv")), "dev")
 
     # def get_test_examples(self, data_dir):
     #     """See base class."""
@@ -523,10 +639,10 @@ class QAProcessor(DataProcessor):
     def _create_examples(self, data, set_type):
         """Creates examples for the training and dev sets."""
         examples = []
-        for i, row in data.iterrows():
-            guid = "%s-%s" % (set_type, i+1)
+        for row in data.itertuples(index=True):
+            guid = "%s-%s" % (set_type, row.Index+1)
             text_a = row.text_left
-            if i == 0:
+            if row.Index == 0:
                 logger.info(f"数据为：{text_a}")
             text_b = row.text_right
             label = row.label
@@ -586,7 +702,7 @@ class StyleProcessor(DataProcessor):
     def _read_csv(self, input_file):
         lines = []
         df = pd.read_csv(input_file)
-        for i, row in df.iterrows():
+        for row in df.itertuples(index=True):
             line = row.text.strip().split("\t")
             line.append(row.label)
             lines.append(line)
@@ -647,10 +763,11 @@ glue_tasks_num_labels = {
     "qqp": 2,
     "qnli": 2,
     "rte": 2,
-    'lcqmc': 2,
+    "lcqmc": 2,
     "xnli": 3,
     "qa": 2,
     "style" : 5,
+    "sim": 2,
 }
 
 glue_processors = {
@@ -663,10 +780,11 @@ glue_processors = {
     "qqp": QqpProcessor,
     "qnli": QnliProcessor,
     "rte": RteProcessor,
-    'lcqmc': SimProcessor,
+    "lcqmc": SimProcessor,
     "wnli": WnliProcessor,
     "qa": QAProcessor,
-    "style": StyleProcessor
+    "style": StyleProcessor,
+    "sim": SimProcessor,
 }
 
 glue_output_modes = {
@@ -683,4 +801,5 @@ glue_output_modes = {
     "lcqmc": "classification",
     "qa": "classification",
     "style": "classification",
+    "sim": "classification",
 }

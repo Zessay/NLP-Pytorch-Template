@@ -25,13 +25,14 @@ from albert_pytorch.model.modeling_albert_bright import AlbertModel
 
 class AlbertMSN(BaseModel):
     def __init__(self, uttr_len=30, resp_len=30, turns=5,
-                 config=None, model_path=None, freeze_bert=True):
+                 config=None, model_path=None, freeze_bert=True, data_type="uur"):
         self.config = config
         self.model_path = model_path
         self.uttr_len = uttr_len
         self.resp_len = resp_len
         self.turns = turns
         self.freeze_bert = freeze_bert
+        self.data_type = data_type
         super(AlbertMSN, self).__init__()
 
     # 设置默认参数

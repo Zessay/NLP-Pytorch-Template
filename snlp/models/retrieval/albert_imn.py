@@ -20,19 +20,21 @@ from snlp.params.param_table import ParamTable
 from snlp.modules.stacked_brnn import StackedBRNN
 from snlp.modules.transformer.layers import CrossAttentionLayer
 from snlp.modules.transformer.models import get_pad_mask, PositionalEncoding
+import snlp.tools.constants as constants
 
 from albert_pytorch.model.modeling_albert_bright import AlbertModel
 
 
 class AlbertIMN(BaseModel):
     def __init__(self, uttr_len=30, resp_len=30, turns=5,
-                 config=None, model_path=None, freeze_bert=True):
+                 config=None, model_path=None, data_type="uur", freeze_bert=True):
         self.config = config
         self.model_path = model_path
         self.uttr_len = uttr_len
         self.resp_len = resp_len
         self.turns = turns
         self.freeze_bert = freeze_bert
+        self.data_type = data_type
         super(AlbertIMN, self).__init__()
 
     def get_default_params(self) -> ParamTable:
@@ -42,10 +44,16 @@ class AlbertIMN(BaseModel):
             name="padding_idx", value=0,
             desc="Whether to add turn embedding."
         ))
+
         # --------------------- 定义标志位 ---------------------
         params.add(Param(
             name='is_layer_norm', value=True,
             desc="Whether to use layer normalization when output from cross attention layer."
+        ))
+
+        params.add(Param(
+            name='is_ur_embed', value=True,
+            desc="Whether to use ur embedding add to the albert embedding."
         ))
         # --------------------- 设置模型参数 -------------------
         ## char embedding
@@ -102,12 +110,15 @@ class AlbertIMN(BaseModel):
             for child in self.albert.children():
                 for param in child.parameters():
                     param.requires_grad=False
+        if self.params['is_ur_embed'] and self.data_type == 'uru':
+            self.ur_embed = nn.Embedding(2, self.params['d_model'])
+
 
         # 堆叠的RNN网络
-        self.stack_brnn = StackedBRNN(input_size=self._params['d_model'],
-                                      hidden_size=self._params['stack_brnn_hid'],
-                                      num_layers=self._params['stack_brnn_layers'],
-                                      dropout_rate=self._params['dropout'],
+        self.stack_brnn = StackedBRNN(input_size=self.params['d_model'],
+                                      hidden_size=self.params['stack_brnn_hid'],
+                                      num_layers=self.params['stack_brnn_layers'],
+                                      dropout_rate=self.params['dropout'],
                                       stack_layers=True)
 
         # 定义对多层Attention时的参数，初始化为全0
@@ -123,21 +134,21 @@ class AlbertIMN(BaseModel):
         #                                     dropout=self._params['dropout'])
 
         # 定义一个用于获取句子表征的GRU层
-        self.sent_gru = nn.GRU(input_size=8*self._params['stack_brnn_hid'],
-                               hidden_size=self._params['stack_brnn_hid'],
+        self.sent_gru = nn.GRU(input_size=8*self.params['stack_brnn_hid'],
+                               hidden_size=self.params['stack_brnn_hid'],
                                batch_first=True,
-                               dropout=self._params['dropout'],
+                               dropout=self.params['dropout'],
                                bidirectional=True)
         # 定义用于uttr表征的GRU层
-        self.uttr_gru = nn.GRU(input_size=6*self._params['stack_brnn_hid'],
-                               hidden_size=self._params['stack_brnn_hid'],
+        self.uttr_gru = nn.GRU(input_size=6*self.params['stack_brnn_hid'],
+                               hidden_size=self.params['stack_brnn_hid'],
                                batch_first=True,
-                               dropout=self._params['dropout'],
+                               dropout=self.params['dropout'],
                                bidirectional=True)
 
-        self.mlps = self._make_multi_perceptron_layer(in_features=12*self._params['stack_brnn_hid'])
-        self.output = self._make_output_layer(in_features=self._params['mlp_num_fan_out'])
-        self.dropout = nn.Dropout(self._params['dropout'])
+        self.mlps = self._make_multi_perceptron_layer(in_features=12*self.params['stack_brnn_hid'])
+        self.output = self._make_output_layer(in_features=self.params['mlp_num_fan_out'])
+        self.dropout = nn.Dropout(self.params['dropout'])
         self.init_weights()
 
     def init_weights(self):
@@ -172,24 +183,35 @@ class AlbertIMN(BaseModel):
     def forward(self, inputs):
         # 首先获取输入的utterance和response
         ## [B, Nu, Lu]
-        utterances = inputs['utterances']
+        utterances = inputs[constants.UTTRS]
         ## [B, Lr]
-        response = inputs['response']
+        response = inputs[constants.RESP]
+
         bsz = utterances.size(0)
         ## 对utterances进行reshape [B*Nu, Lu]
         utterances = utterances.view(bsz*self.turns, self.uttr_len)
+        ## 如果是uru的形式，获取UR的position标记
+        if self.data_type == "uru":
+            ## [B, Nu, Lu]
+            ur_pos = inputs[constants.UR_POS]
+            ur_pos = ur_pos.view(bsz*self.turns, self.uttr_len)
+
 
         # 获取utterance和response的mask
         ## [B*Nu, 1, Lu]
-        uttrs_mask = get_pad_mask(utterances, self._params['padding_idx'])
+        uttrs_mask = get_pad_mask(utterances, self.params['padding_idx'])
         uttrs_albert_mask = uttrs_mask.squeeze(dim=-2) ## [B*Nu, Lu]
         ## [B, 1, Lr]
-        resp_mask = get_pad_mask(response, self._params['padding_idx'])
+        resp_mask = get_pad_mask(response, self.params['padding_idx'])
         resp_albert_mask = resp_mask.squeeze(dim=-2) ## [B, Lr]
 
         ## 获取utterance和response的embeding
         U_emb = self.albert(input_ids=utterances, attention_mask=uttrs_albert_mask)[0] ## [B*Nu, Lu, d_model]
         R_emb = self.albert(input_ids=response, attention_mask=resp_albert_mask)[0] ## [B, Lr, d_model]
+
+        if self.params['is_ur_embed'] and self.data_type == "uru":
+            ur_emb = self.ur_embed(ur_pos)
+            U_emb = U_emb + ur_emb
 
         ## 对输出的padding进行mask
         uttrs_embed_mask = uttrs_albert_mask.unsqueeze(dim=-1)

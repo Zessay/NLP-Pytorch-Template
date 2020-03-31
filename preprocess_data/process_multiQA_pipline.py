@@ -40,6 +40,15 @@ def seed_everything(seed=2020):
     np.random.seed(seed)
 
 
+def part_replace_kv(string):
+    for key, value in PERSONAS_DATA['Persona_Data_Robot_0'].items():
+        if key != '[robot_name]' and key != '[robot_nick]':
+            string = string.replace(key, value)
+    for key, value in PROFILES_DATA['Profile_Data_User_0'].items():
+        string = string.replace(key, value)
+
+    return string
+
 def read_and_get_QAlist_from_json(config):
     """根据标准的多轮对话json文件生成"""
     with open(Path(config.from_path) / config.from_file, 'r', encoding='utf8') as f:
@@ -59,14 +68,9 @@ def read_and_get_QAlist_from_json(config):
             num += 1
 
         q = "\t".join(uttrs)
-        for key, value in PERSONAS_DATA['Persona_Data_Robot_0'].items():
-            if key != '[robot_name]' and key != '[robot_nick]':
-                q = q.replace(key, value)
-        for key, value in PROFILES_DATA['Profile_Data_User_0'].items():
-            q = q.replace(key, value)
-
+        q = part_replace_kv(q)
         a = reply
-
+        a = part_replace_kv(a)
         seq_num.append(f"D_{config.to_file_name}{num}")
         question.append(q.strip())
         answer.append(a)
@@ -80,10 +84,14 @@ def read_and_get_QAlist_from_txt(config):
         for i, line in enumerate(f):
             line = line.strip()
             if line:
+                line = part_replace_kv(line)
                 dialogue.append(line)
             else:
-                data.append(dialogue)
+                if len(dialogue) > 3:
+                    data.append(dialogue)
                 dialogue = []
+
+    logger.info(f"共有 {len(data)} 轮对话")
     seq_num, question, answer = [], [], []
 
     for index, dialogue in enumerate(data):
@@ -98,7 +106,46 @@ def read_and_get_QAlist_from_txt(config):
             answer.append(a)
     return seq_num, question, answer
 
-def process_and_save(seq_num, question, answer):
+def read_and_get_URU_from_txt(config):
+    """
+    一行一句话，每一个dialogue用换行符分隔。
+    URU表示对前面的utterance需要拼接response
+    """
+    data = []
+    with open(Path(config.from_path)/ config.from_file, 'r', encoding='utf8') as f:
+        # 将每一轮对话添加到data中
+        dialogue = []
+        for i, line in enumerate(f):
+            line = line.strip()
+            if line:
+                line = part_replace_kv(line)
+                dialogue.append(line)
+            else:
+                if len(dialogue) > 3:
+                    data.append(dialogue)
+                dialogue = []
+    seq_num, question, answer = [], [], []
+
+    logger.info(f"共有 {len(data)} 轮对话")
+    # 对每一轮对话进行处理
+    for index, dialogue in enumerate(data):
+        if len(dialogue) <= 3:
+            continue
+        q = ""
+        for i in range(0, len(dialogue), 2):
+            q += dialogue[i]
+            if (i + 1) >= len(dialogue):
+                continue
+            a = dialogue[i + 1]
+            seq_num.append(f"D_{config.to_file_name}{index}")
+            question.append(q.strip())
+            answer.append(a)
+            ## 下一轮的时候拼接当前轮的回复
+            q += "\t" + a + "\t"
+    return seq_num, question, answer
+
+
+def process_and_save(seq_num, question, answer, utype):
     # seq_num相同表示是同一组对话
     # questions表示是当前response的历史utterances
     # answer表示当前回复
@@ -107,7 +154,12 @@ def process_and_save(seq_num, question, answer):
     pos_data['prev_uttrs'] = pos_data['utterances'].apply(lambda s: "\t".join(s.split("\t")[:-1]))
     pos_data['last'] = pos_data['utterances'].apply(lambda s: s.split("\t")[-1])
     ## 获取包含当前轮总共的轮数
-    pos_data['turns'] = pos_data['utterances'].apply(lambda s: len(s.split("\t")))
+    if utype == "uur":
+        pos_data['turns'] = pos_data['utterances'].apply(lambda s: len(s.split("\t")))
+    elif utype == "uru":
+        pos_data['turns'] = pos_data['utterances'].apply(lambda s: len(s.split("\t"))//2+1)
+    else:
+        raise ValueError("Only `uru` and `uur` can be recognized.")
 
     pos_data = pos_data[['D_num', 'turns', 'utterances', 'prev_uttrs', 'last', 'response']]
     # 返回处理好的数据
@@ -199,8 +251,8 @@ def gen_multiQA_train_val(p_data, n_data, config):
     n_rand_index = np.random.permutation(n_all_index)
 
     # 定义训练集的长度
-    p_train_len = int(len(p_rand_index) * 0.8)
-    n_train_len = int(len(n_rand_index) * 0.8)
+    p_train_len = int(len(p_rand_index) * config.train_rate)
+    n_train_len = int(len(n_rand_index) * config.train_rate)
 
     p_train = p_data.iloc[p_rand_index[:p_train_len], :].reset_index(drop=True)
     p_valid = p_data.iloc[p_rand_index[p_train_len:], :].reset_index(drop=True)
@@ -211,11 +263,20 @@ def gen_multiQA_train_val(p_data, n_data, config):
     multi_train = pd.concat([p_train, n_train], axis=0, sort=False, ignore_index=True)
     multi_valid = pd.concat([p_valid, n_valid], axis=0, sort=False, ignore_index=True)
 
-    train_index = np.random.permutation(range(multi_train.shape[0]))
-    valid_index = np.random.permutation(range(multi_valid.shape[0]))
+    # 打乱顺序
+    multi_train = multi_train.sample(frac=1).reset_index(drop=True)
+    multi_valid = multi_valid.sample(frac=1).reset_index(drop=True)
 
-    multi_train = multi_train.iloc[train_index, :]
-    multi_valid = multi_valid.iloc[valid_index, :]
+    # train_index = np.random.permutation(range(multi_train.shape[0]))
+    # valid_index = np.random.permutation(range(multi_valid.shape[0]))
+    #
+    # multi_train = multi_train.iloc[train_index, :]
+    # multi_valid = multi_valid.iloc[valid_index, :]
+
+    logger.info(f"训练集数量为 {multi_train.shape[0]} | 验证集数量为 {multi_valid.shape[0]}")
+
+    if (not Path(config.to_path).exists()):
+        Path(config.to_path).mkdir(parents=True)
 
     multi_train.to_csv(Path(config.to_path) / f"multi_{config.to_file_name}_train.csv", index=False)
     multi_valid.to_csv(Path(config.to_path) / f"multi_{config.to_file_name}_val.csv", index=False)
@@ -235,6 +296,10 @@ if __name__ == "__main__":
                         help="The final file name, like 50w, persona, or pass, don't need the full name.")
     parser.add_argument("--sample", default='random', type=str, choices=['random', 'same'],
                         help="Sample the neg in the random turn or the same turn.")
+    parser.add_argument("--type", default="uur", type=str, choices=['uru', 'uur'],
+                        help="How to concat the text_left (add response or not).")
+    parser.add_argument("--train_rate", default=0.9, type=float,
+                        help="The rate of train samples.")
     parser.add_argument("--n_jobs", default=5, type=int,
                         help="The number of jobs to use when random sample.")
     parser.add_argument("--seed", default=2020, type=int,
@@ -248,36 +313,60 @@ if __name__ == "__main__":
     if config.from_file.endswith(".json"):
         seq_num, question, answer = read_and_get_QAlist_from_json(config)
     else:
-        seq_num, question, answer = read_and_get_QAlist_from_txt(config)
-
+        if config.type == "uur":
+            seq_num, question, answer = read_and_get_QAlist_from_txt(config)
+        elif config.type == "uru":
+            seq_num, question, answer = read_and_get_URU_from_txt(config)
+        else:
+            raise ValueError("Only `uru` and `uur` can be recognized.")
     # 简单处理得到正样本
-    logger.info("对文件进行处理")
-    p_data = process_and_save(seq_num, question, answer)
+    logger.info(f"得到的Q的数量 {len(question)} | A的数量 {len(answer)}，对文件进行处理")
+    # 获取正样本数据
+    p_data = process_and_save(seq_num, question, answer, config.type)
 
-    logger.info(f"在 {config.sample} turn 中进行采样")
+    cores = mp.cpu_count()
+    logger.info(f"在 {config.sample} turn 中进行采样，共计 {cores} 个核心")
     if config.sample == "random":
-        # 随机采样
-        responses = p_data['response'].values.tolist()
-        length = p_data.shape[0]
-        prefix = f"multi_{config.to_file_name}_neg_random"
-        results = []
-        pool = mp.Pool()
-        for p in range(config.n_jobs):
-            start = int(p / config.n_jobs * length)
-            end = int((p+1) / config.n_jobs * length)
-            result = pool.apply_async(sample_multiQA_neg_random_turn,
-                                      args=(p_data,start,end,responses,length,prefix,))
-            results.append(result)
-        pool.close()
-        pool.join()
-        if all([res.ready() for res in results]):
+        try:
+            ## 随机采样
+            responses = p_data['response'].values.tolist()
+            length = p_data.shape[0]
+            prefix = f"multi_{config.to_file_name}_neg_random"
+            results = []
+            pool = mp.Pool()
+            for p in range(config.n_jobs):
+                start = int(p / config.n_jobs * length)
+                end = int((p+1) / config.n_jobs * length)
+                result = pool.apply_async(sample_multiQA_neg_random_turn,
+                                          args=(p_data,start,end,responses,length,prefix,))
+                results.append(result)
+            pool.close()
+            pool.join()
+            if all([res.ready() for res in results]):
+                logger.info("负采样完成")
+                files = os.listdir("./data")
+                n_data = pd.DataFrame()
+                for file in files:
+                    tmp = pd.read_csv(Path("./data") / file)
+                    n_data = pd.concat([n_data, tmp], axis=0, sort=False, ignore_index=True)
+                assert n_data.shape == p_data.shape, "正负样本维度不一致"
+                # 删除中间生成的数据
+                shutil.rmtree("./data")
+        except Exception as e:
+            logger.info(f"启动多线程时发生错误： {e}")
+            responses = p_data['response'].values.tolist()
+            length = p_data.shape[0]
+            prefix = f"multi_{config.to_file_name}_neg_random"
+            # 进行采样
+            sample_multiQA_neg_random_turn(p_data, start=0, end=length,responses=responses,
+                                           length=length, prefix=prefix)
             logger.info("负采样完成")
             files = os.listdir("./data")
             n_data = pd.DataFrame()
             for file in files:
                 tmp = pd.read_csv(Path("./data") / file)
                 n_data = pd.concat([n_data, tmp], axis=0, sort=False, ignore_index=True)
-            assert n_data.shape == p_data.shape
+            assert n_data.shape == p_data.shape, "正负样本维度不一致"
             # 删除中间生成的数据
             shutil.rmtree("./data")
     elif config.sample == "same":
@@ -288,4 +377,3 @@ if __name__ == "__main__":
     # 得到最终的数据并保存
     logger.info(f"将数据保存为训练集和验证集，路径为 {config.to_path}")
     gen_multiQA_train_val(p_data, n_data, config)
-

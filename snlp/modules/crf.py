@@ -117,7 +117,7 @@ class CRF(nn.Module):
         forward_var = forward_var[range(forward_var.shape[0]), lens_, :]
         ## 加上转移到结束符的概率 [B, tag_size]
         terminal_var = forward_var + self.transitions[self.tag_dict[self.START_TAG]][None, :].repeat(forward_var.shape[0], 1)
-        ## 得到对数概率和 [B, tag_size]
+        ## 得到对数概率和 [B, ]
         alpha = log_sum_exp_batch(terminal_var)
         return alpha
 

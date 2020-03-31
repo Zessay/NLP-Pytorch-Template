@@ -80,6 +80,62 @@ def _padding_3D(input, output, word_mode: str='post', char_mode: str='post'):
                 if start_pos > 0:
                     output[i][ouj][-start_pos:] = input[i][inj][-start_pos:]
 
+# -----------------------------------------------------------------------------
+# UR模式下的padding
+def _padding_3D_UR(input, output, ur_output, word_mode: str='post', char_mode: str='post'):
+    if word_mode not in ['post', 'pre']:
+        raise ValueError(f"{char_mode} is not a valid char pad mode.")
+    if char_mode not in ['post', 'pre']:
+        raise ValueError(f"{word_mode} is not a valid word pad mode.")
+
+    batch_size = min(output.shape[0], len(input))
+    pad_1d_length = output.shape[1]  # 通常表示一个sentence中单词的数量，对应turn的长度
+    pad_2d_length = output.shape[2]  # 通常表示一个word中字符的数量，对应sentence的长度
+
+    if char_mode == "post":
+        for i in range(batch_size):
+            # 表示原始turn的长度
+            origin_len = len(input[i])
+            len_d1 = min(origin_len, pad_1d_length)
+            origin_list = range(0, origin_len, 2)
+            turns_list = range(pad_1d_length-len_d1, pad_1d_length) if word_mode=='pre' else range(len_d1)
+            zip_list = zip(origin_list[::-1], turns_list[::-1])
+            for inj, ouj in zip_list:
+                ## 这里表示turn中单词的数量
+                if inj == origin_len-1:
+                    cur_sent = input[i][inj]
+                    cur_len = len(cur_sent)
+                    ur_ = [0] * len(input[i][inj])
+                else:
+                    cur_sent = list(input[i][inj]) + list(input[i][inj+1])
+                    cur_len = len(cur_sent)
+                    ur_ = [0] * len(input[i][inj]) + [1] * len(input[i][inj+1])
+                end_pos = min(cur_len, pad_2d_length)
+                if end_pos > 0:
+                    output[i][ouj][:end_pos] = cur_sent[:end_pos]
+                    ur_output[i][ouj][:end_pos] = ur_[:end_pos]
+    else:
+        for i in range(batch_size):
+            origin_len = len(input[i])
+            len_d1 = min(origin_len, pad_1d_length)
+            origin_list= range(0, origin_len, 2)
+            turns_list = range(pad_1d_length-len_d1, pad_1d_length) if word_mode=='pre' else range(len_d1)
+            zip_list = zip(origin_list[::-1], turns_list[::-1])
+            for inj, ouj in zip_list:
+                ## 这里表示turn中单词的数量
+                if inj == origin_len-1:
+                    cur_sent = input[i][inj]
+                    cur_len = len(cur_sent)
+                    ur_ = [0] * len(input[i][inj])
+                else:
+                    cur_sent = list(input[i][inj]) + list(input[i][inj+1])
+                    cur_len = len(cur_sent)
+                    ur_ = [0] * len(input[i][inj]) + [1] * len(input[i][inj+1])
+                start_pos = min(cur_len, pad_2d_length)
+                if start_pos > 0:
+                    output[i][ouj][-start_pos:] = cur_sent[-start_pos:]
+                    ur_output[i][ouj][-start_pos] = ur_[-start_pos:]
+
 
 # -------------------- 只存在一个文本字段情况时的padding方法 ----------------------
 
@@ -186,6 +242,7 @@ class DoubleBasicPadding(BaseCallback):
         if self._fixed_length_right is not None:
             pad_length_right = self._fixed_length_right
 
+
         for key, value in x.items():
             if key == constants.TEXT_LEFT:
                 padded_value = np.full([batch_size, pad_length_left],
@@ -223,6 +280,7 @@ class MultiQAPadding(BaseCallback):
                  fixed_length_resp_char: typing.Optional[int]=None,
                  pad_word_value: typing.Union[int, str]=0,
                  pad_word_mode: str='post',
+                 data_type: str='uur',
                  dtype=np.int32):
         self._fixed_length_uttr = fixed_length_uttr
         self._fixed_length_resp = fixed_length_resp
@@ -233,6 +291,7 @@ class MultiQAPadding(BaseCallback):
         self._pad_word_mode = pad_word_mode
         self._char = char
         self._dtype = dtype
+        self._data_type = data_type
 
     def on_batch(self, x: dict, y: np.ndarray):
         """
@@ -265,7 +324,13 @@ class MultiQAPadding(BaseCallback):
             if key == constants.UTTRS:
                 padded_value = np.full([batch_size, pad_length_turn, pad_length_uttr],
                                        self._pad_word_value, dtype=self._dtype)
-                _padding_3D(value, padded_value, word_mode='pre', char_mode=self._pad_word_mode)
+                if self._data_type == "uru":
+                    ur_output = np.full([batch_size, pad_length_turn, pad_length_uttr],
+                                       self._pad_word_value, dtype=self._dtype)
+
+                    _padding_3D_UR(value, padded_value, ur_output=ur_output, word_mode="pre", char_mode=self._pad_word_mode)
+                else:
+                    _padding_3D(value, padded_value, word_mode='pre', char_mode=self._pad_word_mode)
             elif key == constants.RESP:
                 padded_value = np.full([batch_size, pad_length_resp],
                                        self._pad_word_value, dtype=self._dtype)
@@ -283,3 +348,5 @@ class MultiQAPadding(BaseCallback):
             x[key] = padded_value
 
 
+        if self._data_type == "uru":
+            x[constants.UR_POS] = ur_output

@@ -15,7 +15,7 @@ python run_classifier.py \
   --per_gpu_eval_batch_size=128 \
   --learning_rate=1e-4 \
   --num_train_epochs=5.0 \
-  --logging_steps=26455 \
-  --save_steps=26455 \
+  --logging_steps=11188 \
+  --save_steps=11188 \
   --output_dir=/home/speech/models/qa_output_ \
   --overwrite_output_dir
