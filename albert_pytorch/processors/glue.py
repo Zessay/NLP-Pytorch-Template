@@ -618,14 +618,15 @@ class QAProcessor(DataProcessor):
 
     def get_train_examples(self, data_dir):
         """See base class."""
-        logger.info("Logging at {}".format(os.path.join(data_dir, 'train_0326.csv')))
+        ## open qa: train_0326.csv   |   persona_qa: train_persona.csv
+        logger.info("Logging at {}".format(os.path.join(data_dir, 'train_persona.csv')))
         return self._create_examples(
-            self._read_csv(os.path.join(data_dir, "train_0326.csv")), "train")
+            self._read_csv(os.path.join(data_dir, "train_persona.csv")), "train")
 
     def get_dev_examples(self, data_dir):
         """See base class."""
         return self._create_examples(
-            self._read_csv(os.path.join(data_dir, "dev_0326.csv")), "dev")
+            self._read_csv(os.path.join(data_dir, "dev_persona.csv")), "dev")
 
     # def get_test_examples(self, data_dir):
     #     """See base class."""

@@ -1,4 +1,4 @@
-export BERT_BASE_DIR=/home/speech/models/albert_tiny_pytorch_489k
+export BERT_BASE_DIR=/home/speech/models/qa_output_albert/qa_model7675
 TASK_NAME="qa"
 
 python run_classifier_pair.py \
@@ -8,16 +8,16 @@ python run_classifier_pair.py \
   --do_train \
   --do_eval \
   --do_lower_case \
-  --data_dir=/home/speech/data/single_qa \
+  --data_dir=/home/speech/data/qa_persona \
   --vocab_file=$BERT_BASE_DIR/vocab.txt \
   --max_seq_length=64 \
   --per_gpu_train_batch_size=64 \
   --per_gpu_eval_batch_size=128 \
-  --learning_rate=1e-4 \
+  --learning_rate=2e-5 \
   --num_train_epochs=5.0 \
-  --logging_steps=22376 \
-  --save_steps=22376 \
-  --output_dir=/home/speech/models/qa_output_ \
+  --logging_steps=317 \
+  --save_steps=317 \
+  --output_dir=/home/speech/models/qa_persona_ \
   --loss_type=ls \
   --ls_epsilon=0.2 \
   --fusion_type=cross \

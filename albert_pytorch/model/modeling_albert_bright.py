@@ -1257,7 +1257,10 @@ class AlbertForSequenceClassificationLS(AlbertPreTrainedModel):
     def __init__(self, config):
         super(AlbertForSequenceClassificationLS, self).__init__(config)
         self.num_labels = config.num_labels
-        self.epsilon = 0.2
+
+        self.loss_type = config.loss_type
+        self.ls_epsilon = config.ls_epsilon
+        self.class_num = [1] * self.num_labels
 
         self.bert = AlbertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -1283,8 +1286,17 @@ class AlbertForSequenceClassificationLS(AlbertPreTrainedModel):
 
         if labels is not None:
             ## KL散度，输入logits是对数概率
-            loss_fct = LabelSmoothLoss(label_smoothing=self.epsilon, reduction="batchmean")
+            loss_fct = CrossEntropyLoss()
+            if self.loss_type == "ls":
+                loss_fct = LabelSmoothLoss(label_smoothing=self.ls_epsilon, reduction="mean")
+            elif self.loss_type == "cb":
+                loss_fct = CBFocalLoss(class_num=self.class_num, reduction="mean")
+            elif self.loss_type == "focal":
+                loss_fct = FocalLoss(num_classes=self.num_labels, reduction="mean")
             loss = loss_fct(logits.view(-1, self.num_labels), labels)
+            # if self.loss_type != "ce":
+            #     loss += CrossEntropyLoss()(logits.view(-1, self.num_labels), labels)
+
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, (hidden_states), (attentions)
@@ -1309,6 +1321,9 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
         self.abs = config.abs   # 当fusion为cross的时候，是否要对sub添加绝对值
 
         self.class_num = [1] * self.num_labels  # 用作CBloss的参数
+        # 表示是否要移除首句[CLS]的标记
+        self.remove_first = config.remove_first
+
 
         self.bert = AlbertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -1324,6 +1339,8 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
         else:
             raise KeyError(f"can't recognize {self.fusion_type}.")
 
+        if self.remove_first:
+            hidden_size = hidden_size - config.hidden_size
 
         if self.loss_type == "cosine":
             self.dense = nn.Linear(config.hidden_size, 128)
@@ -1334,7 +1351,9 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
             self.activation = nn.Tanh()
         elif config.out_activation == "relu":
             self.activation = nn.ReLU()
-        self.dropout = nn.Dropout(config.output_dropout_prob)
+
+        if config.output_dropout:
+            self.out_dropout = nn.Dropout(config.output_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
 
         self.init_weights()
@@ -1374,7 +1393,12 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
                 ## [B, embed_size]
                 second_sent = torch.gather(sequence_output, dim=1, index=ss_token)[:, 0, :]
                 ## [B, 2*embed_size]
-                dense_input = torch.cat([dense_input, second_sent], dim=-1)
+
+                ## 如果要移除首句中的[CLS]
+                if self.remove_first:
+                    dense_input = second_sent
+                else:
+                    dense_input = torch.cat([dense_input, second_sent], dim=-1)
 
                 if self.fusion_type == "addend":
                     # 获取第二个字符结束位置的输出
@@ -1400,7 +1424,10 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
             logits = nn.CosineSimilarity(eps=1e-5)(first_sent, second_sent)
         else:
             # logits = self.classifier(self.dropout(self.activation(self.dense(dense_input))))
-            logits = self.classifier(self.activation(self.dense(dense_input)))
+            output = self.activation(self.dense(self.dropout(dense_input)))
+            if self.config.output_dropout:
+                output = self.out_dropout(output)
+            logits = self.classifier(output)
 
         # pooled_output = self.dropout(pooled_output)
         # logits = self.classifier(pooled_output)
@@ -1427,9 +1454,13 @@ class AlbertForSequenceClassificationPair(AlbertPreTrainedModel):
                     elif self.loss_type == "cb":
                         loss_fct = CBFocalLoss(class_num=self.class_num, reduction='mean')
                     loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                    # if self.loss_type != 'ce':
+                    #     loss = loss + CrossEntropyLoss()(logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, (hidden_states), (attentions)
+
+
 
 # ------------------------------------- 进行BERT+Softmax的NER分类 -----------------------------------
 

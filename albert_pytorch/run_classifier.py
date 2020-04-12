@@ -59,25 +59,27 @@ def train(args, train_dataset, model, tokenizer):
     args.warmup_steps = int(num_training_steps * args.warmup_proportion)
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
-    bert_param_optimizer = list(model.bert.named_parameters())
-    linear_param_optimizer = list(model.classifier.named_parameters())
+    if args.hier_lr:
+        ## 使用分层学习率
+        bert_param_optimizer = list(model.bert.named_parameters())
+        linear_param_optimizer = [(n, p) for n, p in model.named_parameters() if 'bert' not in n]
 
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
-         'weight_decay': args.weight_decay, 'lr': 5e-5},
-        {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
-         'weight_decay': 0.0, 'lr': 5e-5},
-        {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
-         'weight_decay': args.weight_decay, 'lr': args.learning_rate},
-        {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
-         'weight_decay': 0.0, 'lr': args.learning_rate}
-    ]
-    #
-    # optimizer_grouped_parameters = [
-    #     {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-    #      'weight_decay': args.weight_decay},
-    #     {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-    # ]
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': args.weight_decay, 'lr': 5e-5},
+            {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': 5e-5},
+            {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': args.weight_decay, 'lr': args.learning_rate},
+            {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': args.learning_rate}
+        ]
+    else:
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+             'weight_decay': args.weight_decay},
+            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
     # optimizer = Lamb(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     optimizer = AdamW(params=optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     # optimizer = Lookahead(optimizer, device=args.device)
@@ -342,6 +344,14 @@ def main():
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_proportion", default=0.1, type=float,
                         help="Proportion of training to perform linear learning rate warmup for,E.g., 0.1 = 10% of training.")
+    parser.add_argument("--hier_lr", action="store_true",
+                        help="Whether to use hierarchy learning rate.")
+
+    # 添加新的参数
+    parser.add_argument('--loss_type', type=str, default="ce",
+                        help="The loss type.")
+    parser.add_argument('--ls_epsilon', type=float, default=0.2,
+                        help="The label smoothing factor.")
 
     parser.add_argument('--logging_steps', type=int, default=10,
                         help="Log every X updates steps.")
@@ -359,6 +369,7 @@ def main():
                         help="random seed for initialization")
     parser.add_argument('--save_eval',action='store_true',
                         help="Whether to save the eval result.")
+
 
     parser.add_argument('--fp16', action='store_true',
                         help="Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit")
@@ -423,7 +434,9 @@ def main():
     args.model_type = args.model_type.lower()
     config = AlbertConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           num_labels=num_labels,
-                                          finetuning_task=args.task_name)
+                                          finetuning_task=args.task_name,
+                                          loss_type=args.loss_type,
+                                          ls_epsilon=args.ls_epsilon)
     tokenizer = tokenization_albert.FullTokenizer(vocab_file=args.vocab_file, do_lower_case=args.do_lower_case,
                                                  spm_model_file=args.spm_model_file)
     model = model_class.from_pretrained(args.model_name_or_path,

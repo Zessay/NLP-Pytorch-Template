@@ -42,10 +42,13 @@ model_class = AlbertForSequenceClassificationPair
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    # logger.info("采用上采样")
-    # train_sampler = UpSampler(train_dataset)
-    # logger.info(f"采样后的数据量： {len(train_sampler)}")
+    if args.task_name == "style":
+        logger.info("采用上采样")
+        train_sampler = UpSampler(train_dataset)
+        logger.info(f"采样后的数据量： {len(train_sampler)}")
+    else:
+        train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
                                   collate_fn=collate_fn)
 
@@ -58,7 +61,7 @@ def train(args, train_dataset, model, tokenizer):
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
     # bert_param_optimizer = list(model.bert.named_parameters())
-    # linear_param_optimizer = list(model.classifier.named_parameters())
+    # linear_param_optimizer = [(n, p) for n, p in model.named_parameters() if 'bert' not in n]
     #
     # optimizer_grouped_parameters = [
     #     {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
@@ -228,7 +231,7 @@ def evaluate(args, model, tokenizer, prefix=""):
         # 保存评估的结果
         if args.save_eval:
             logger.info("save the eval result")
-            # np.save(Path(args.output_dir) / f"eval_result_{prefix}", preds)
+            np.save(Path(args.output_dir) / f"eval_result_{prefix}", preds)
         result = compute_metrics(eval_task, preds, out_label_ids)
         results.update(result)
         logger.info("***** Eval results {} *****".format(prefix))
@@ -374,6 +377,11 @@ def main():
                         help="The dropout rate of the output layer.")
     parser.add_argument('--out_activation', type=str, default="relu",
                         help="The activation function of the output layer.")
+    parser.add_argument('--output_dropout', action='store_true',
+                        help="Whether to use dropout in the output layer.")
+    parser.add_argument('--remove_first', action='store_true',
+                        help="Whether to remove the first [CLS] token.")
+
 
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
@@ -449,7 +457,9 @@ def main():
                                           fusion_type=args.fusion_type,
                                           abs=args.abs,
                                           output_dropout_prob=args.output_dropout_prob,
-                                          out_activation=args.out_activation)
+                                          out_activation=args.out_activation,
+                                          output_dropout=args.output_dropout,
+                                          remove_first=args.remove_first)
     tokenizer = tokenization_albert.FullTokenizer(vocab_file=args.vocab_file, do_lower_case=args.do_lower_case,
                                                  spm_model_file=args.spm_model_file)
     model = model_class.from_pretrained(args.model_name_or_path,

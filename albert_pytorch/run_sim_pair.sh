@@ -17,10 +17,10 @@ python run_classifier_pair.py \
   --num_train_epochs=5.0 \
   --logging_steps=5689 \
   --save_steps=5689 \
-  --output_dir=/home/speech/models/sim_output_ \
+  --output_dir=/home/speech/models/lcqmc_output_ \
   --loss_type=ls \
   --ls_epsilon=0.2 \
   --fusion_type=cross \
   --output_dropout_prob=0.1 \
-  --out_activation=relu \
+  --out_activation=tanh \
   --overwrite_output_dir

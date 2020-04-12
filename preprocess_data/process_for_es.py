@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.getcwd()))
 
 import json
 import copy
+import pandas as pd
 from pathlib import Path
 from tqdm.auto import tqdm
 from snlp.tools.common import is_chinese_char, is_chinese_punc
@@ -21,14 +22,13 @@ from snlp.tools.log import logger
 
 
 data_name = "loan"
-basename = "/home/speech/data/test_data"
-files = ["clean_leguan_buy_style.data.format",
-         "clean_zhongxing_buy_style.data.format",
-         "clean_beiguan_buy_style.data.format"]
+basename = "/home/speech/data/style_data"
+files = ["style_data.csv"]
 
-to_file = "clean_buy0317.json"
+to_file = "clean_buy0331.json"
 
 # date = "0225"
+csv = True
 data_type = "pair"
 # from_file = "business_dialogue.txt"
 # to_file = "business_single_turn.json"
@@ -88,13 +88,31 @@ def get_uttr_resp_oneline_pair(files):
                     resps.append(line_list[-1].strip().replace(" ", ""))
     return uttrs, resps
 
+def get_uttr_resp_csv(files, ucol="query", acol="answer"):
+    data = pd.DataFrame()
+    for file in files:
+        tmp = pd.read_csv(Path(basename) / file)
+        data = pd.concat([data, tmp], axis=0, sort=False, ignore_index=True)
+
+    data = data[[ucol, acol]]
+    data.dropna(axis=0, inplace=True)
+    data[ucol] = data[ucol].apply(lambda s: s.strip().replace(" ", ""))
+    data[acol] = data[acol].apply(lambda s: s.strip().replace(" ", ""))
+
+    uttrs = data[ucol].values.tolist()
+    resps = data[acol].values.tolist()
+
+    return uttrs, resps
 
 
 def main():
-    if data_type == "single":
-        uttrs, resps = get_uttr_resps_oneline_single(files)
+    if csv:
+        uttrs, resps = get_uttr_resp_csv(files)
     else:
-        uttrs, resps = get_uttr_resp_oneline_pair(files)
+        if data_type == "single":
+            uttrs, resps = get_uttr_resps_oneline_single(files)
+        else:
+            uttrs, resps = get_uttr_resp_oneline_pair(files)
 
     logger.info("处理uttrance")
     for i, uttr in enumerate(uttrs):
