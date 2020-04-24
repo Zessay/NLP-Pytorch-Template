@@ -66,7 +66,7 @@ class CRF(nn.Module):
         ## STOP不可能转移到其他状态
         self.transitions.detach()[:, self.tag_dict[self.STOP_TAG]] = -10000
         self.transitions = self.transitions.to(device)
-        self.transitions = nn.Parameter(self.transitions)
+        self.transitions = nn.Parameter(self.transitions, requires_grad=True)
 
     def _forward_alg(self, feats, lens_):
         """
@@ -177,7 +177,7 @@ class CRF(nn.Module):
             scores[-1][swap_best_path],
         )
         start = best_path.pop()
-        assert start == self.tag_dictionary[self.START_TAG]
+        assert start == self.tag_dict[self.START_TAG]
         ## 最后将路径翻转
         best_path.reverse()
         return best_scores, best_path, scores

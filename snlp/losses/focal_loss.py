@@ -51,12 +51,13 @@ class FocalLoss(nn.Module):
         self.alpha = self.alpha.to(y_pred.device)
         # 计算softmax
         y_prob = F.softmax(y_pred, dim=1)
-        y_logprob = torch.log(y_prob)
+
         ## 获取每个类别对应位置的概率
         y_prob = y_prob.gather(1, y_true.view(-1, 1))
         ## 获取每一个类别对应位置的对数概率
-        y_logprob = y_logprob.gather(1, y_true.view(-1, 1))
+        y_logprob = torch.log(y_prob)
         ## 对忽略的索引进行mask
+        num_labels = (y_true != self._ignore_index).sum()  # 计算有效的标签的数量
         y_logprob.masked_fill_((y_true == self._ignore_index).unsqueeze(1), 0)
         self.alpha = self.alpha.gather(0, y_true.view(-1))
         loss = - (torch.pow((1-y_prob), self.gamma) * y_logprob)
@@ -65,11 +66,11 @@ class FocalLoss(nn.Module):
         if self._reduction == "none":
             loss = loss
         elif self._reduction == "mean":
-            loss = loss.mean()
+            loss = loss.sum() / num_labels
         elif self._reduction == "sum":
             loss = loss.sum()
         else:
-            raise ValueError(f"{self._reduction} is not allow, only permit `mean` and `sum`. ")
+            raise ValueError(f"{self._reduction} is not allow, only permit `none` `mean` and `sum`. ")
         return loss
 
 if __name__ == "__main__":

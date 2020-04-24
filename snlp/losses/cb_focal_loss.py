@@ -6,7 +6,7 @@
 @contact: zessay@sogou-inc.com
 @file: cb_focal_loss.py
 @time: 2019/12/4 16:31
-@description: Class Balanced Focal Loss： https://arxiv.org/pdf/1901.05555.pdf
+@description: Class Balanced Focal Loss https://arxiv.org/pdf/1901.05555.pdf
 '''
 import typing
 import math
@@ -60,10 +60,12 @@ class CBFocalLoss(nn.Module):
         loss = - (torch.pow((1 - y_prob), self.gamma) * y_logprob)
         loss = torch.mul(self.sub_beta, loss.t())
 
-        if self._reduction == "mean":
+        if self._reduction == "none":
+            loss = loss
+        elif self._reduction == "mean":
             loss = loss.mean()
         elif self._reduction == "sum":
             loss = loss.sum()
         else:
-            raise ValueError(f"{self._reduction} is not allow, only permit `mean` and `sum`. ")
+            raise ValueError(f"{self._reduction} is not allow, only permit `none` `mean` and `sum`.")
         return loss

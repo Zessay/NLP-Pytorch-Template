@@ -16,9 +16,11 @@ import torch.nn.functional as F
 class RankCrossEntropyLoss(nn.Module):
     """ Creates a criterion that measures rank cross entropy loss. """
     __constants__ = ['num_neg']
-    def __init__(self, num_neg: int=1):
+    def __init__(self, num_neg: int=1, reduction: str="mean"):
         super().__init__()
         self._num_neg = num_neg
+
+        self._reduction = reduction
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         """
@@ -38,11 +40,19 @@ class RankCrossEntropyLoss(nn.Module):
             logits = torch.cat((logits, neg_logits), dim=-1)
             labels = torch.cat((labels, neg_labels), dim=-1)
 
-        return -torch.mean(
-            torch.sum(labels * torch.log(F.softmax(logits, dim=-1)+torch.finfo(float).eps),
-                      dim=-1)
-        )
 
+        loss = -torch.sum(labels * torch.log(F.softmax(logits, dim=-1)+torch.finfo(float).eps),
+                      dim=-1)
+        if self._reduction == "none":
+            loss = loss
+        elif self._reduction == "mean":
+            loss = loss.mean()
+        elif self._reduction == "sum":
+            loss = loss.sum()
+        else:
+            raise ValueError(f"{self._reduction} is not allow, only permit `none` `mean` and `sum`. ")
+
+        return loss
 
     @property
     def num_neg(self):
