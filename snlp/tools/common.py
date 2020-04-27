@@ -135,6 +135,25 @@ def load_json(file_path):
         data = json.load(f)
     return data
 
+def strQ2B(ustring):
+    """
+    全角符号转对应的半角符号
+    :param ustring:
+    :return:
+    """
+    rstring = ""
+    for uchar in ustring:
+        inside_code = ord(uchar)
+        # 全角空格直接转换
+        if inside_code == 12288:
+            inside_code = 32
+        # 全角字符（除空格）根据对应的关系转换
+        elif (inside_code >= 65281 and inside_code <= 65374):
+            inside_code -= 65248
+        rstring += chr(inside_code)
+    return rstring
+
+
 def is_chinese_char(ch):
     """Checks whether CP is the codepoint of a CJK character."""
     # This defines a "chinese character" as anything in the CJK Unicode block:
