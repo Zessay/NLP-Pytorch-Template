@@ -17,7 +17,7 @@ import torch.nn.functional as F
 class CBFocalLoss(nn.Module):
     """Class Balanced Focal Loss"""
     def __init__(self,
-                 class_num: list,
+                 class_num: typing.List[int],
                  beta: float=0.99,
                  gamma: float=2.0,
                  reduction: str="mean"):
@@ -29,11 +29,10 @@ class CBFocalLoss(nn.Module):
         :param reduction: 可选`mean`和`sum`
         """
         super(CBFocalLoss, self).__init__()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.beta = beta
         self.gamma = gamma
-        self._nums = torch.zeros(len(class_num)).to(device)
-        self.sub_beta = torch.zeros(len(class_num)).to(device)
+        self._nums = torch.zeros(len(class_num))
+        self.sub_beta = torch.zeros(len(class_num))
         for i in range(len(class_num)):
             self._nums[i] = class_num[i]
             self.sub_beta[i] = (1 - self.beta) / (1 - math.pow(self.beta, class_num[i]))
@@ -47,6 +46,8 @@ class CBFocalLoss(nn.Module):
         :param y_true: shape为[B, ]
         :return:
         """
+        self._nums = self._nums.to(device=y_pred.device)
+        self.sub_beta = self.sub_beta.to(device=y_pred.device)
         y_pred = y_pred.view(-1, y_pred.size(-1))
         # 计算每个类别的概率和对数概率
         y_prob = F.softmax(y_pred, dim=1)

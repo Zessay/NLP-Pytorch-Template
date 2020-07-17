@@ -16,7 +16,7 @@ import torch.nn.functional as F
 class FocalLoss(nn.Module):
     def __init__(self,
                  num_classes: int=2,
-                 alpha: typing.Union[int, list]=0.5,
+                 alpha: typing.Union[float, list]=0.5,
                  gamma: int=2,
                  reduction: str="mean",
                  ignore_index=-100):
