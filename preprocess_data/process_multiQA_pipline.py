@@ -144,6 +144,30 @@ def read_and_get_URU_from_txt(config):
             q += "\t" + a + "\t"
     return seq_num, question, answer
 
+def read_and_get_prepared_txt(config):
+    """
+    表示从已经准备好的数据中获取多轮对话结果，其中一行是context，下一行就是answer
+    context中间用\t\t拼接
+    :param config:
+    :return:
+    """
+    with open(Path(config.from_path) / config.from_file, 'r', encoding="utf8") as f:
+        lines = f.readlines()
+
+    length = len(lines)
+    if length % 2!= 0:
+        length = length - 1
+
+    lines = lines[:length]
+    seq_num, question, answer = [], [], []
+    for i in range(0, length, 2):
+        q = lines[i].replace("\t\t", "\t").strip()
+        a = lines[i+1].strip()
+        seq_num.append(f"D_{config.to_file_name}{i//2}")
+        question.append(q)
+        answer.append(a)
+
+    return seq_num, question, answer
 
 def process_and_save(seq_num, question, answer, utype):
     # seq_num相同表示是同一组对话
@@ -304,21 +328,26 @@ if __name__ == "__main__":
                         help="The number of jobs to use when random sample.")
     parser.add_argument("--seed", default=2020, type=int,
                         help="The sample seed.")
+    parser.add_argument("--prepared", action='store_true',
+                        help="Whether the data have split by dialogue.")
 
     config = parser.parse_args()
     seed_everything(config.seed)
 
     logger.info(f"读取文件 {config.from_file}")
     # 首先读取数据
-    if config.from_file.endswith(".json"):
-        seq_num, question, answer = read_and_get_QAlist_from_json(config)
+    if config.prepared:
+        seq_num, question, answer = read_and_get_prepared_txt(config)
     else:
-        if config.type == "uur":
-            seq_num, question, answer = read_and_get_QAlist_from_txt(config)
-        elif config.type == "uru":
-            seq_num, question, answer = read_and_get_URU_from_txt(config)
+        if config.from_file.endswith(".json"):
+            seq_num, question, answer = read_and_get_QAlist_from_json(config)
         else:
-            raise ValueError("Only `uru` and `uur` can be recognized.")
+            if config.type == "uur":
+                seq_num, question, answer = read_and_get_QAlist_from_txt(config)
+            elif config.type == "uru":
+                seq_num, question, answer = read_and_get_URU_from_txt(config)
+            else:
+                raise ValueError("Only `uru` and `uur` can be recognized.")
     # 简单处理得到正样本
     logger.info(f"得到的Q的数量 {len(question)} | A的数量 {len(answer)}，对文件进行处理")
     # 获取正样本数据

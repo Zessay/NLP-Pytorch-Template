@@ -4,7 +4,7 @@
 @author: zessay
 @license: (C) Copyright Sogou.
 @contact: zessay@sogou-inc.com
-@file: test_predict.py
+@file: test_predictor.py
 @time: 2020/1/6 14:53
 @description: 
 '''

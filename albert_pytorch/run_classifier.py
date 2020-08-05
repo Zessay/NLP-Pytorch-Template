@@ -10,15 +10,12 @@ import argparse
 import os
 import glob
 import numpy as np
-from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 
 # from albert_pytorch.model.modeling_albert import AlbertConfig, AlbertForSequenceClassification
-from albert_pytorch.model.modeling_albert_bright import AlbertConfig, \
-    AlbertForSequenceClassification, \
-    AlbertCombinationForSequenceCLS, AlbertForSequenceClassificationLS # chinese version
+from albert_pytorch.model.modeling_albert_bright import AlbertConfig, AlbertForSequenceClassificationLS # chinese version
 from albert_pytorch.model import tokenization_albert
 from albert_pytorch.model.file_utils import WEIGHTS_NAME
 
@@ -33,8 +30,8 @@ from albert_pytorch.callback.progressbar import ProgressBar
 from snlp.tools.common import seed_everything
 from snlp.tools.log import init_logger, logger
 from snlp.optimizer import AdamW
-from snlp.schedule import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
-from snlp.datagen.sampler import UpSampler
+from snlp.schedule import get_linear_schedule_with_warmup
+from snlp.datagen.sampler import UpSampler  # NOQA
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 # model_class = AlbertCombinationForSequenceCLS

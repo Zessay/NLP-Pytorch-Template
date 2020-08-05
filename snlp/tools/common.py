@@ -63,6 +63,40 @@ def prepare_device(n_gpu_use):
     list_ids = n_gpu_use
     return device, list_ids
 
+def parse_device(device: typing.Union[torch.device, int, str]):
+    n_gpu = torch.cuda.device_count()
+    if isinstance(device, int):
+        if device == -1:
+            device = torch.device("cpu")
+        elif device < n_gpu:
+            device = torch.device(f"cuda:{device}")
+        else:
+            msg = f"Warning: The number of GPU\'s configured to use is {device}, " \
+                  f"but only {n_gpu} are available on this machine."
+            logger.warning(msg)
+            device = torch.device("cuda")
+    elif isinstance(device, str):
+        if device == "cpu":
+            device = torch.device(device)
+        elif device == "cuda":
+            device = torch.device(device)
+        elif "cuda:" in device:
+            gpu = int(device[5:])
+            if gpu < n_gpu:
+                device = torch.device(device)
+            else:
+                msg = f"Warning: The number of GPU\'s configured to use is {device}, " \
+                      f"but only {n_gpu} are available on this machine."
+                logger.warning(msg)
+                device = torch.device("cuda")
+        else:
+            device, _ = prepare_device(device)
+    elif isinstance(device, torch.device):
+        pass
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return device
+
 def model_device(n_gpu, model):
     '''
     判断环境 cpu还是gpu
@@ -398,7 +432,6 @@ def validate_context(func):
             raise ValueError("Please call 'fit' before calling 'transform'.")
         return func(self, *args, **kwargs)
     return transform_wrapper
-
 
 
 ## ------------------ 列出一个类的所有子类 -------------------------

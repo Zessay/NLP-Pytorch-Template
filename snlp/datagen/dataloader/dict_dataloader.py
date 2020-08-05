@@ -67,7 +67,7 @@ class DictDataLoader(DataLoader):
         self._stage = stage
         self._callback = callback
 
-        self._dataloader = None
+        self.init_epoch()
 
     def __len__(self) -> int:
         """Get the total number of batches."""
@@ -94,7 +94,6 @@ class DictDataLoader(DataLoader):
         )
 
     def __iter__(self):
-        self.init_epoch()
         for batch_data in self._dataloader:
             # 这里x是dict类型，而y是ndarray类型
             x, y = batch_data

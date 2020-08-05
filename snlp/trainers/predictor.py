@@ -10,26 +10,26 @@
 '''
 import typing
 import torch
+from typing import Any
 from pathlib import Path
 
 from snlp.base.base_model import BaseModel
+from snlp.tools.common import parse_device
+
 
 class Predictor:
     def __init__(self,
                  model: BaseModel,
                  save_dir: typing.Union[str, Path]=None,
                  checkpoint: typing.Union[str, Path]=None,
-                 device: typing.Union[torch.device, int, None]=None):
+                 device: typing.Union[torch.device, int, str]=None):
         self.model = model
         self._parse_device(device)
         self._load_model(save_dir, checkpoint)
 
 
-    def _parse_device(self, device):
-        if not (isinstance(device, torch.device) or isinstance(device, int)):
-            device = torch.device(
-                "cuda" if torch.cuda.is_available() else "cpu")
-        self._device = device
+    def _parse_device(self, device: typing.Union[torch.device, int, str]):
+        self._device = parse_device(device)
 
     def _load_model(self,
                    save_dir: typing.Union[str, Path],
@@ -47,8 +47,11 @@ class Predictor:
         self.model.load_state_dict(state)
         self.model.to(self._device)
 
-    def predict(self, inputs):
+    def predict(self, inputs: typing.Dict[str, Any], softmax: bool=True):
         self.model.eval()
         with torch.no_grad():
-            outputs = self.model(inputs).detach().cpu().numpy()
+            outputs = self.model(inputs).detach().cpu()
+        if softmax:
+            outputs = torch.softmax(outputs, dim=-1)
+        outputs = outputs.numpy()
         return outputs

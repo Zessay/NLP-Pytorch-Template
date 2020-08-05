@@ -24,6 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import snlp.tasks as tasks
 from snlp.base import BaseModel, BaseMetric
+from snlp.tools.common import parse_device
 from snlp.tools.log import logger
 from snlp.tools.average_meter import AverageMeter
 from snlp.tools.timer import Timer
@@ -113,10 +114,7 @@ class Trainer:
             self._model = torch.nn.DataParallel(self._model, device_ids=device)
             self._device = device[0]
         else:
-            if not (isinstance(device, torch.device) or isinstance(device, int)):
-                device = torch.device(
-                    "cuda" if torch.cuda.is_available() else "cpu")
-                self._device = device
+            self._device = parse_device(device)
         self._model.to(self._device)
 
     def _load_dataloader(self,

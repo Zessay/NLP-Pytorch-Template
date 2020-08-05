@@ -1,5 +1,5 @@
-tensorflow-gpu
-pytorch
+tensorflow-gpu==1.15.0
+pytorch>=1.2.0
 dill
 numpy
 pandas
@@ -13,3 +13,4 @@ nltk
 sentencepiece
 tokenizers
 gensim
+synonyms
