@@ -22,6 +22,8 @@ import torch.nn as nn
 import cProfile
 import pstats
 import logging
+import matplotlib.pyplot as plt
+from matplotlib import ticker
 
 
 logger = logging.getLogger(__name__)
@@ -446,3 +448,38 @@ def _filter_concrete(classes):
 def _bfs(base):
     return base.__subclasses__() + sum([
         _bfs(subclass) for subclass in base.__subclasses__()], [])
+
+## ------------------ 打印attention的热力分布矩阵 -------------------
+
+def showAttention(input_sentence: str, output_words: str,  attentions: torch.Tensor, 
+                  save_file: str = None):
+    """
+    用于绘制attention分布图
+    Args:
+        input_sentence: str，输入语句，不同token之间用空格分隔
+        output_words: str，输出语句，不同token之间用空格分隔
+        attentions: torch.Tensor，表示attention分布矩阵
+        save_file: str，表示将图片保存的路径，默认为None
+    Returns:
+    """
+    # 首先设置图和画轴
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    cax = ax.matshow(attentions.numpy(), cmap="bone")
+    fig.colorbar(cax)
+
+    # 设置坐标轴限制的内容
+    ax.set_xticklabels([''] + input_sentence.split() + ['<EOS>'], rotation=90)
+    ax.set_yticklabels([''] + output_words.split())
+
+    # 在每个刻度处显示标签
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+
+    if save_file:
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.margins(0, 0)
+        fig.savefig(save_file, format='png', dpi=400, pad_inches=0)
+    plt.show()
+
+
