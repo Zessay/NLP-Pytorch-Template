@@ -1,4 +1,4 @@
-tensorflow-gpu==1.15.2
+tensorflow-gpu==2.7.2
 pytorch>=1.2.0
 dill
 numpy
